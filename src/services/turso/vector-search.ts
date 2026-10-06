@@ -9,7 +9,7 @@ import {
   tokenizeQueryText,
   vectorToJson,
 } from "./vector-utils.js";
-import type { TursoDb, TursoTx } from "./turso-db.js";
+import type { SqlValue, TursoDb, TursoTx } from "./turso-db.js";
 
 function parseMetadata(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "string") return undefined;
@@ -359,26 +359,44 @@ export class TursoVectorSearch {
   async listMemories(
     db: TursoDb,
     containerTag: string,
-    limit: number
+    limit: number,
+    tagFilters: string[] = []
   ): Promise<Record<string, unknown>[]> {
-    return containerTag === ""
-      ? db.all(
-          `
+    const filters = Array.isArray(tagFilters)
+      ? tagFilters.map((t) => String(t).trim().toLowerCase()).filter((t) => t.length > 0)
+      : [];
+    const params: SqlValue[] = [];
+    const clauses: string[] = [];
+    if (containerTag !== "") {
+      clauses.push("container_tag = ?");
+      params.push(containerTag);
+    }
+    for (const tag of filters) {
+      // Tags are stored as one comma-separated string, so match with commas on
+      // both sides: otherwise "git" also matches "github" and "legit".
+      // escapeLikePattern() keeps `%`, `_` and `\` literal under ESCAPE.
+      clauses.push("(',' || COALESCE(tags, '') || ',') LIKE ? ESCAPE '\\'");
+      params.push(`%,${escapeLikePattern(tag)},%`);
+    }
+    if (clauses.length === 0) {
+      return db.all(
+        `
       SELECT * FROM memories
       ORDER BY is_pinned DESC, created_at DESC
       LIMIT ?
     `,
-          [limit]
-        )
-      : db.all(
-          `
+        [limit]
+      );
+    }
+    return db.all(
+      `
       SELECT * FROM memories
-      WHERE container_tag = ?
+      WHERE ${clauses.join(" AND ")}
       ORDER BY is_pinned DESC, created_at DESC
       LIMIT ?
     `,
-          [containerTag, limit]
-        );
+      [...params, limit]
+    );
   }
 
   async getAllMemories(db: TursoDb): Promise<Record<string, unknown>[]> {

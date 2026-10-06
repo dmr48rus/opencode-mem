@@ -465,6 +465,14 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
     schema,
   };
 
+  // Free-tier providers reject sessionless generate calls; a real session is
+  // accepted. Returns undefined outside an opencode host, so tests and the CLI
+  // fall through to the transports below unchanged.
+  const realSession = await tryGenerateViaRealSession(args);
+  if (realSession !== undefined) {
+    return realSession;
+  }
+
   const useTextJson = shouldUseOpencodeTextJson(providerID);
 
   if (_useSdkTransport && hasV2SessionClient(client)) {
@@ -787,6 +795,205 @@ function readSdkData<T>(response: unknown, label: string): T {
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+/**
+ * Credentials for the local opencode server, taken from the environment the
+ * host process exports. Returns undefined when the plugin is not running inside
+ * an opencode host (tests, CLI) so callers can fall back.
+ */
+function readLocalServerConfig(): { base: string; password: string } | undefined {
+  const port = process.env.OPENCODE_PORT;
+  const password = process.env.OPENCODE_SERVER_PASSWORD;
+  if (!port || !password) return undefined;
+  return { base: `http://127.0.0.1:${port}`, password };
+}
+
+async function localServerFetch(
+  config: { base: string; password: string },
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<unknown> {
+  // The password only ever travels in the Authorization header, never in the
+  // URL: URLs end up in logs and traces.
+  const res = await fetch(`${config.base}${path}`, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      Authorization: `Basic ${Buffer.from(`opencode:${config.password}`).toString("base64")}`,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const detail =
+      typeof data === "string" ? data.slice(0, 200) : JSON.stringify(data ?? {}).slice(0, 200);
+    throw new Error(`opencode-mem: ${method} ${path} failed (HTTP ${res.status}): ${detail}`);
+  }
+  return data;
+}
+
+function candidateStart(text: string): number {
+  const brace = text.indexOf("{");
+  const bracket = text.indexOf("[");
+  if (brace === -1) return bracket;
+  if (bracket === -1) return brace;
+  return Math.min(brace, bracket);
+}
+
+/**
+ * Extract a JSON value from model text: bare JSON, a ```json fence, or JSON
+ * embedded in prose (first balanced object/array, skipping braces in strings).
+ */
+export function extractJsonPayload(raw: unknown): unknown {
+  if (raw && typeof raw === "object") return raw;
+  if (typeof raw !== "string") return undefined;
+  const text = raw.trim();
+  if (!text) return undefined;
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates: string[] = [];
+  if (fence?.[1]) candidates.push(fence[1].trim());
+  candidates.push(text);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // not bare JSON; fall through to the balanced scan
+    }
+  }
+  const start = candidateStart(text);
+  if (start === -1) return undefined;
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Structured output through a real, session-scoped opencode session.
+ *
+ * Free-tier providers (OpenCode Zen with `apiKey: "public"`) reject sessionless
+ * generate calls, which is what both the plugin Generate API and the
+ * sessionless `/api/experimental/generate` route use. A session-scoped generate
+ * is accepted, so prefer the real-session HTTP path whenever the host exposes
+ * OPENCODE_PORT / OPENCODE_SERVER_PASSWORD.
+ *
+ * Returns undefined when the local server is not reachable, so the caller falls
+ * back to the SDK/HTTP transports. Throws when the server answered but the
+ * result did not satisfy the schema.
+ */
+async function tryGenerateViaRealSession<T>(
+  args: SdkStructuredOutputArgs<T>
+): Promise<T | undefined> {
+  const config = readLocalServerConfig();
+  if (!config) return undefined;
+  const { providerID, modelID, systemPrompt, userPrompt, jsonSchema, schema } = args;
+
+  const created = await localServerFetch(config, "POST", "/api/session", {
+    title: INTERNAL_CAPTURE_SESSION_TITLE,
+  });
+  const sessionID = (created as { data?: { id?: string }; id?: string })?.data?.id ?? undefined;
+  const resolvedID = sessionID ?? (created as { id?: string })?.id ?? undefined;
+  if (!resolvedID) {
+    throw new Error(
+      "opencode-mem: session create returned no id for real-session structured output"
+    );
+  }
+  markInternalSession(resolvedID);
+  trackInternalCaptureSession(resolvedID);
+  try {
+    // Pin the model: the free tier exposes models only to session-scoped calls,
+    // and the session default may be a different (paid) model.
+    await localServerFetch(config, "POST", `/api/session/${resolvedID}/model`, {
+      model: { id: modelID, providerID },
+    });
+    const prompt = [
+      systemPrompt,
+      "",
+      "Respond with a single JSON value that validates against this JSON Schema.",
+      "Return raw JSON only: no prose, no markdown fences, no commentary.",
+      "",
+      "JSON Schema:",
+      JSON.stringify(jsonSchema),
+      "",
+      "Task:",
+      userPrompt,
+    ].join("\n");
+    // The session-scoped generate route occasionally answers with an empty body
+    // (a transient provider hiccup rather than a schema problem), so retry
+    // before giving up. Each attempt re-uses the same session; a fresh one is
+    // not needed because nothing was committed.
+    const attempts = Math.max(1, Math.min(4, (args.retryCount ?? 1) + 1));
+    let lastText: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const generated = await localServerFetch(
+        config,
+        "POST",
+        `/api/session/${resolvedID}/generate`,
+        { prompt }
+      );
+      const text =
+        (generated as { data?: { text?: unknown } })?.data?.text ??
+        (generated as { text?: unknown })?.text;
+      lastText = text;
+      const payload = extractJsonPayload(text);
+      if (payload !== undefined) {
+        return schema.parse(payload);
+      }
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+      }
+    }
+    throw new Error(
+      `opencode-mem: real-session generate returned no JSON after ${attempts} attempt(s) ` +
+        `(got: ${String(lastText).slice(0, 200)})`
+    );
+  } finally {
+    unmarkInternalSession(resolvedID);
+    try {
+      await localServerFetch(config, "DELETE", `/api/session/${resolvedID}`);
+    } catch {
+      // intentionally swallowed: cleanup is cosmetic
+    } finally {
+      untrackInternalCaptureSession(resolvedID);
+    }
+  }
 }
 
 function buildQuery(directory?: string): string {

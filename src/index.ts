@@ -1110,20 +1110,33 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
               }
 
               case "list": {
+                const listTags = args.tags
+                  ? String(args.tags)
+                      .split(",")
+                      .map((t: string) => t.trim().toLowerCase())
+                      .filter((t: string) => t.length > 0)
+                  : [];
                 const listRes = await memoryClient.listMemories(
                   tags.project.tag,
                   args.limit || 20,
-                  args.scope ?? CONFIG.memory.defaultScope
+                  args.scope ?? CONFIG.memory.defaultScope,
+                  listTags
                 );
                 if (!listRes.success)
                   return JSON.stringify({ success: false, error: listRes.error });
                 return JSON.stringify({
                   success: true,
                   count: listRes.memories?.length,
+                  filters: {
+                    tags: listTags,
+                    limit: args.limit || 20,
+                    scope: args.scope ?? CONFIG.memory.defaultScope,
+                  },
                   memories: listRes.memories?.map((m: any) => ({
                     id: m.id,
                     content: m.summary,
                     createdAt: m.createdAt,
+                    tags: Array.isArray(m.tags) ? m.tags : [],
                   })),
                 });
               }

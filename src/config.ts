@@ -75,6 +75,18 @@ interface OpenCodeMemConfig {
    * strings like "180000" are coerced.
    */
   opencodeTimeoutMs?: number;
+  /**
+   * Retry a structured-output call through a real, session-scoped opencode
+   * session when the configured transport rejects it.
+   *
+   * Free-tier providers (OpenCode Zen with `apiKey: "public"`) reject the
+   * sessionless generate calls that both the plugin Generate API and
+   * `/api/experimental/generate` use, which breaks auto-capture summaries and
+   * profile learning. A session-scoped generate is accepted. Needs the host to
+   * export OPENCODE_PORT and OPENCODE_SERVER_PASSWORD; without them the
+   * fallback is a no-op.
+   */
+  opencodeRealSessionFallback?: boolean;
   aiSessionRetentionDays?: number;
   webServerEnabled?: boolean;
   webServerPort?: number;
@@ -169,6 +181,7 @@ const DEFAULTS: Required<
     | "opencodeModel"
     | "opencodeVariant"
     | "opencodeTimeoutMs"
+    | "opencodeRealSessionFallback"
     | "autoCaptureLanguage"
     | "userEmailOverride"
     | "userNameOverride"
@@ -434,6 +447,12 @@ const CONFIG_TEMPLATE = `{
    // (auto-capture summaries, profile learning; default 90000, clamped to 10000..600000;
    // invalid values fall back to the default; numeric strings are coerced):
    // "opencodeTimeoutMs": 180000,
+   // Retry a rejected structured-output call through a real, session-scoped
+   // opencode session (default false). Needed for free-tier providers such as
+   // OpenCode Zen with apiKey "public", which reject the sessionless generate
+   // calls the plugin otherwise uses. Requires the host to export
+   // OPENCODE_PORT and OPENCODE_SERVER_PASSWORD:
+   // "opencodeRealSessionFallback": true,
 
    // ============================================
    // Auto-Capture Settings
@@ -889,6 +908,7 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     opencodeModel: fileConfig.opencodeModel,
     opencodeVariant: normalizeOpencodeVariant(fileConfig.opencodeVariant),
     opencodeTimeoutMs: normalizeOpencodeTimeoutMs(fileConfig.opencodeTimeoutMs),
+    opencodeRealSessionFallback: fileConfig.opencodeRealSessionFallback ?? false,
     autoCaptureProviderStatus: getAutoCaptureProviderStatus({
       opencodeProvider: fileConfig.opencodeProvider,
       opencodeModel: fileConfig.opencodeModel,

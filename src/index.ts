@@ -323,6 +323,7 @@ export async function configureOpencodeHostTransport(ctx: {
     resetHostFetch,
     setHostFetch,
     setV2Client,
+    setStructuredOutputRealSessionFallback,
     setStructuredOutputTimeoutConfig,
   } = await loadOpencodeProvider();
   resetHostFetch();
@@ -330,6 +331,8 @@ export async function configureOpencodeHostTransport(ctx: {
   // the lazily-bundled provider module never imports config.js (whose import
   // side effects would leak into subprocess gates and loader bundles).
   setStructuredOutputTimeoutConfig(CONFIG.opencodeTimeoutMs);
+  // Same reason: the real-session fallback flag is config, injected not imported.
+  setStructuredOutputRealSessionFallback(CONFIG.opencodeRealSessionFallback);
   const hostConfig = getHostClientConfig(ctx);
   if (hostConfig.fetch) {
     setHostFetch(hostConfig.fetch);
@@ -1117,20 +1120,33 @@ export const OpenCodeMemPlugin: Plugin = async (ctx: PluginInput) => {
               }
 
               case "list": {
+                const listTags = args.tags
+                  ? String(args.tags)
+                      .split(",")
+                      .map((t: string) => t.trim().toLowerCase())
+                      .filter((t: string) => t.length > 0)
+                  : [];
                 const listRes = await memoryClient.listMemories(
                   tags.project.tag,
                   args.limit || 20,
-                  args.scope ?? CONFIG.memory.defaultScope
+                  args.scope ?? CONFIG.memory.defaultScope,
+                  listTags
                 );
                 if (!listRes.success)
                   return JSON.stringify({ success: false, error: listRes.error });
                 return JSON.stringify({
                   success: true,
                   count: listRes.memories?.length,
+                  filters: {
+                    tags: listTags,
+                    limit: args.limit || 20,
+                    scope: args.scope ?? CONFIG.memory.defaultScope,
+                  },
                   memories: listRes.memories?.map((m: any) => ({
                     id: m.id,
                     content: m.summary,
                     createdAt: m.createdAt,
+                    tags: Array.isArray(m.tags) ? m.tags : [],
                   })),
                 });
               }

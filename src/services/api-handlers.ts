@@ -973,15 +973,40 @@ export async function handleBulkDeletePrompts(
   }
 }
 
+/**
+ * Resolve which user id the web UI should read.
+ *
+ * The web server runs from the opencode service directory, not the project
+ * directory, so `getTags(process.cwd())` yields no git user email and the id
+ * collapses to "unknown" while profiles are stored under the project's git
+ * identity. Falling back to the single active profile keeps the UI working in a
+ * single-user setup without inventing a phantom id.
+ */
+async function resolveProfileUserId(explicitUserId?: string): Promise<string> {
+  if (explicitUserId) return explicitUserId;
+  const { getTags } = await import("./tags.js");
+  const tags = getTags(process.cwd());
+  if (tags.user.userEmail) return tags.user.userEmail;
+  try {
+    const { userProfileManager } = await import("./user-profile/user-profile-manager.js");
+    const active = await userProfileManager.getAllActiveProfiles();
+    const only = active.length === 1 ? active[0] : undefined;
+    if (only?.userId) {
+      log("resolveProfileUserId: cwd has no git identity, using the single active profile id", {
+        userId: only.userId,
+      });
+      return only.userId;
+    }
+  } catch (error) {
+    log("resolveProfileUserId: active profile lookup failed", { error: String(error) });
+  }
+  return "unknown";
+}
+
 export async function handleGetUserProfile(userId?: string): Promise<ApiResponse<any>> {
   try {
     const { userProfileManager } = await import("./user-profile/user-profile-manager.js");
-    const { getTags } = await import("./tags.js");
-    let targetUserId = userId;
-    if (!targetUserId) {
-      const tags = getTags(process.cwd());
-      targetUserId = tags.user.userEmail || "unknown";
-    }
+    const targetUserId = await resolveProfileUserId(userId);
     const profile = await userProfileManager.getActiveProfile(targetUserId);
     if (!profile)
       return {

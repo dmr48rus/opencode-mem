@@ -269,7 +269,12 @@ export class LocalMemoryClient {
     }
   }
 
-  async listMemories(containerTag: string, limit = 20, scope: MemoryScope = "project") {
+  async listMemories(
+    containerTag: string,
+    limit = 20,
+    scope: MemoryScope = "project",
+    tagFilters: string[] = []
+  ) {
     try {
       await this.initialize();
 
@@ -295,7 +300,8 @@ export class LocalMemoryClient {
         const memories = await tursoVectorSearch.listMemories(
           db,
           scope === "all-projects" ? "" : containerTag,
-          limit
+          limit,
+          tagFilters
         );
         allMemories.push(...memories);
       }
@@ -306,6 +312,12 @@ export class LocalMemoryClient {
         id: r.id,
         summary: r.content,
         createdAt: safeToISOString(r.created_at),
+        tags: r.tags
+          ? String(r.tags)
+              .split(",")
+              .map((t: string) => t.trim())
+              .filter((t: string) => t.length > 0)
+          : [],
         metadata: safeJSONParse(r.metadata),
         displayName: r.display_name,
         userName: r.user_name,

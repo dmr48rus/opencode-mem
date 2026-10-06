@@ -63,6 +63,14 @@ let _structuredOutputTimeoutOverrideMs: number | undefined;
 let _structuredOutputConfiguredMs: number | undefined;
 
 /**
+ * Whether a rejected structured-output call may be retried through a real
+ * session. Injected by the plugin init from
+ * CONFIG.opencodeRealSessionFallback; default off so behaviour matches
+ * upstream unless the operator asks for it.
+ */
+let _realSessionFallback = false;
+
+/**
  * Test helper: override the structured-output prompt timeout. Pass undefined
  * to reset to the configured value.
  */
@@ -76,6 +84,16 @@ export function setStructuredOutputTimeoutMsForTests(ms: number | undefined): vo
  */
 export function setStructuredOutputTimeoutConfig(ms: number): void {
   _structuredOutputConfiguredMs = ms;
+}
+
+/**
+ * Injected by the plugin init (from CONFIG.opencodeRealSessionFallback).
+ * When enabled, a structured-output call that the configured transport
+ * rejects is retried through a real, session-scoped opencode session — the
+ * only shape free-tier providers accept.
+ */
+export function setStructuredOutputRealSessionFallback(enabled: boolean): void {
+  _realSessionFallback = enabled;
 }
 
 /**
@@ -465,32 +483,81 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
     schema,
   };
 
-  // Free-tier providers reject sessionless generate calls; a real session is
-  // accepted. Returns undefined outside an opencode host, so tests and the CLI
-  // fall through to the transports below unchanged.
-  const realSession = await tryGenerateViaRealSession(args);
-  if (realSession !== undefined) {
-    return realSession;
-  }
-
   const useTextJson = shouldUseOpencodeTextJson(providerID);
 
-  if (_useSdkTransport && hasV2SessionClient(client)) {
-    return useTextJson
-      ? generateTextJsonViaSdkClient(client, args)
-      : generateViaSdkClient(client, args);
-  }
+  const viaConfiguredTransport = async (): Promise<T> => {
+    if (_useSdkTransport && hasV2SessionClient(client)) {
+      return useTextJson
+        ? generateTextJsonViaSdkClient(client, args)
+        : generateViaSdkClient(client, args);
+    }
 
-  const baseUrl = _v2BaseUrl;
-  if (!baseUrl) {
-    throw new Error(
-      "opencode-mem: v2 server base URL not initialized; call createV2Client(serverUrl) first"
-    );
+    const baseUrl = _v2BaseUrl;
+    if (!baseUrl) {
+      throw new Error(
+        "opencode-mem: v2 server base URL not initialized; call createV2Client(serverUrl) first"
+      );
+    }
+    const base = stripTrailingSlash(baseUrl);
+    return useTextJson
+      ? generateTextJsonViaFetch(base, args)
+      : generateJsonSchemaViaFetch(base, args);
+  };
+
+  try {
+    return await viaConfiguredTransport();
+  } catch (error) {
+    // Free-tier providers (OpenCode Zen with `apiKey: "public"`) reject
+    // sessionless generate calls, so the transports above fail for them. A
+    // real, session-scoped generate is accepted instead.
+    //
+    // Opt-in, and a FALLBACK rather than a preemptor. Both matter:
+    // - opt-in, because a process spawned by the host inherits
+    //   OPENCODE_PORT/OPENCODE_SERVER_PASSWORD, so an always-on fallback
+    //   would hijack every structured-output call in tests and in the CLI and
+    //   replace working transports with a live HTTP round-trip;
+    // - fallback, because a working transport must never be bypassed, and
+    //   because upstream regression tests assert that a failed call makes no
+    //   further requests.
+    if (_realSessionFallback && shouldTryRealSession(error)) {
+      try {
+        const realSession = await tryGenerateViaRealSession(args);
+        if (realSession !== undefined) {
+          return realSession;
+        }
+      } catch {
+        // The fallback failed too. Report the ORIGINAL error: it names the
+        // real cause (timeout, schema mismatch, provider refusal), while the
+        // fallback's error would only describe its own HTTP attempt.
+      }
+    }
+    throw error;
   }
-  const base = stripTrailingSlash(baseUrl);
-  return useTextJson
-    ? generateTextJsonViaFetch(base, args)
-    : generateJsonSchemaViaFetch(base, args);
+}
+
+/**
+ * Whether a failed structured-output call is worth retrying through a real
+ * session.
+ *
+ * Only a provider refusal qualifies. Excluded:
+ * - timeout, step-budget abort, schema mismatch: these fail identically
+ *   through any transport, and retrying costs a live HTTP round-trip to the
+ *   host while hiding the real cause behind the fallback's error;
+ * - connectivity errors (ECONNREFUSED and friends): the fallback talks to the
+ *   same host, so if the host is unreachable the second attempt cannot
+ *   succeed either.
+ */
+function shouldTryRealSession(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/structured-output timed out/.test(message)) return false;
+  if (/structured-output aborted after/.test(message)) return false;
+  if (/returned no structured output/.test(message)) return false;
+  if (
+    /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EPIPE|socket hang up|fetch failed/i.test(message)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 type V2SessionClient = {

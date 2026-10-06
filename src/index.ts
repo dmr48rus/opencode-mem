@@ -322,6 +322,7 @@ export async function configureOpencodeHostTransport(ctx: {
     resetHostFetch,
     setHostFetch,
     setV2Client,
+    setStructuredOutputRealSessionFallback,
     setStructuredOutputTimeoutConfig,
   } = await loadOpencodeProvider();
   resetHostFetch();
@@ -329,6 +330,8 @@ export async function configureOpencodeHostTransport(ctx: {
   // the lazily-bundled provider module never imports config.js (whose import
   // side effects would leak into subprocess gates and loader bundles).
   setStructuredOutputTimeoutConfig(CONFIG.opencodeTimeoutMs);
+  // Same reason: the real-session fallback flag is config, injected not imported.
+  setStructuredOutputRealSessionFallback(CONFIG.opencodeRealSessionFallback);
   const hostConfig = getHostClientConfig(ctx);
   if (hostConfig.fetch) {
     setHostFetch(hostConfig.fetch);

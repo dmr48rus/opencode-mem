@@ -15,6 +15,25 @@ interface ToolCallInfo {
 
 const MAX_TOOL_INPUT_LENGTH = 100;
 const RETRY_BASE_DELAY_MS = 2000;
+
+/**
+ * Error text for the log. `error.message` alone is not enough: some SDK
+ * rejections carry an empty message, and the log then reads {"error":""},
+ * naming neither the cause nor the place.
+ */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const head = [error.name, error.message].filter(Boolean).join(": ");
+    const where = error.stack?.split("\n")[1]?.trim() ?? "";
+    if (where) return head ? `${head} (at ${where})` : `at ${where}`;
+    return head || error.name;
+  }
+  const text = String(error);
+  return text === ""
+    ? `rejected with ${typeof error}: ${JSON.stringify(error) ?? "undefined"}`
+    : text;
+}
+
 const DEFAULT_AUTO_CAPTURE_MAX_CONTEXT_BYTES = 131072;
 const CONTEXT_TRUNCATION_MARKER = "\n[... truncated to autoCaptureMaxContextBytes ...]\n";
 const SUMMARY_REQUEST_OVERHEAD_BYTES = 1024;
@@ -206,7 +225,7 @@ async function capturePrompt(
           throw new Error(`Memory persistence failed: ${result.error || "database write failed"}`);
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = describeError(error);
 
         await userPromptManager.recordFailedAttempt(prompt.id);
 
@@ -221,7 +240,7 @@ async function capturePrompt(
       }
     }
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
+    const errMsg = describeError(error);
     log(`Auto-capture final error after ${attempt} attempts`, { error: errMsg });
     if (CONFIG.showErrorToasts) {
       const shortReason = errMsg.length > 100 ? errMsg.substring(0, 100) + "..." : errMsg;

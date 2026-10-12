@@ -37,6 +37,7 @@ import {
   untrackInternalCaptureSession,
 } from "./internal-capture-sessions.js";
 import { createLazyV2Client, type HostTransport } from "./opencode-sdk-client.js";
+import { log } from "../logger.js";
 
 /** Dedicated agent registered via the plugin config hook (step-capped). */
 export const STRUCTURED_OUTPUT_AGENT = "opencode-mem-structured";
@@ -63,6 +64,14 @@ let _structuredOutputTimeoutOverrideMs: number | undefined;
 let _structuredOutputConfiguredMs: number | undefined;
 
 /**
+ * Whether a rejected structured-output call may be retried through a real
+ * session. Injected by the plugin init from
+ * CONFIG.opencodeRealSessionFallback; default off so behaviour matches
+ * upstream unless the operator asks for it.
+ */
+let _realSessionFallback = false;
+
+/**
  * Test helper: override the structured-output prompt timeout. Pass undefined
  * to reset to the configured value.
  */
@@ -76,6 +85,16 @@ export function setStructuredOutputTimeoutMsForTests(ms: number | undefined): vo
  */
 export function setStructuredOutputTimeoutConfig(ms: number): void {
   _structuredOutputConfiguredMs = ms;
+}
+
+/**
+ * Injected by the plugin init (from CONFIG.opencodeRealSessionFallback).
+ * When enabled, a structured-output call that the configured transport
+ * rejects is retried through a real, session-scoped opencode session — the
+ * only shape free-tier providers accept.
+ */
+export function setStructuredOutputRealSessionFallback(enabled: boolean): void {
+  _realSessionFallback = enabled;
 }
 
 /**
@@ -467,22 +486,61 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
 
   const useTextJson = shouldUseOpencodeTextJson(providerID);
 
-  if (_useSdkTransport && hasV2SessionClient(client)) {
-    return useTextJson
-      ? generateTextJsonViaSdkClient(client, args)
-      : generateViaSdkClient(client, args);
-  }
+  const viaConfiguredTransport = async (): Promise<T> => {
+    if (_useSdkTransport && hasV2SessionClient(client)) {
+      return useTextJson
+        ? generateTextJsonViaSdkClient(client, args)
+        : generateViaSdkClient(client, args);
+    }
 
-  const baseUrl = _v2BaseUrl;
-  if (!baseUrl) {
-    throw new Error(
-      "opencode-mem: v2 server base URL not initialized; call createV2Client(serverUrl) first"
-    );
+    const baseUrl = _v2BaseUrl;
+    if (!baseUrl) {
+      throw new Error(
+        "opencode-mem: v2 server base URL not initialized; call createV2Client(serverUrl) first"
+      );
+    }
+    const base = stripTrailingSlash(baseUrl);
+    return useTextJson
+      ? generateTextJsonViaFetch(base, args)
+      : generateJsonSchemaViaFetch(base, args);
+  };
+
+  try {
+    return await viaConfiguredTransport();
+  } catch (error) {
+    // Free-tier providers (OpenCode Zen with `apiKey: "public"`) reject
+    // sessionless generate calls, so the transports above fail for them. A
+    // real, session-scoped generate is accepted instead.
+    //
+    // Opt-in, and a FALLBACK rather than a preemptor. Both matter:
+    // - opt-in, because a process spawned by the host inherits
+    //   OPENCODE_PORT/OPENCODE_SERVER_PASSWORD, so an always-on fallback
+    //   would hijack every structured-output call in tests and in the CLI and
+    //   replace working transports with a live HTTP round-trip;
+    // - fallback, because a working transport must never be bypassed, and
+    //   because upstream regression tests assert that a failed call makes no
+    //   further requests.
+    if (_realSessionFallback && shouldTryRealSession(error)) {
+      try {
+        const realSession = await tryGenerateViaRealSession(args);
+        if (realSession !== undefined) {
+          return realSession;
+        }
+        log("real-session fallback skipped", {
+          reason: "no local server config (OPENCODE_PORT + OPENCODE_SERVER_PASSWORD)",
+        });
+      } catch (fallbackError) {
+        // The fallback failed too. The ORIGINAL error is still what gets
+        // reported - it names the real cause - but a silent catch made
+        // "the fallback ran and failed" indistinguishable from "the fallback
+        // never ran", which is how a missing OPENCODE_PORT went unnoticed.
+        log("real-session fallback failed", {
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        });
+      }
+    }
+    throw error;
   }
-  const base = stripTrailingSlash(baseUrl);
-  return useTextJson
-    ? generateTextJsonViaFetch(base, args)
-    : generateJsonSchemaViaFetch(base, args);
 }
 
 type V2SessionClient = {
@@ -787,6 +845,231 @@ function readSdkData<T>(response: unknown, label: string): T {
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+/**
+ * Credentials for the local opencode server, taken from the environment the
+ * host process exports. Returns undefined when the plugin is not running inside
+ * an opencode host (tests, CLI) so callers can fall back.
+ */
+function readLocalServerConfig(): { base: string; password: string } | undefined {
+  const port = process.env.OPENCODE_PORT;
+  const password = process.env.OPENCODE_SERVER_PASSWORD;
+  if (!port || !password) return undefined;
+  return { base: `http://127.0.0.1:${port}`, password };
+}
+
+async function localServerFetch(
+  config: { base: string; password: string },
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<unknown> {
+  // The password only ever travels in the Authorization header, never in the
+  // URL: URLs end up in logs and traces.
+  const res = await fetch(`${config.base}${path}`, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      Authorization: `Basic ${Buffer.from(`opencode:${config.password}`).toString("base64")}`,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const detail =
+      typeof data === "string" ? data.slice(0, 200) : JSON.stringify(data ?? {}).slice(0, 200);
+    throw new Error(`opencode-mem: ${method} ${path} failed (HTTP ${res.status}): ${detail}`);
+  }
+  return data;
+}
+
+function candidateStart(text: string): number {
+  const brace = text.indexOf("{");
+  const bracket = text.indexOf("[");
+  if (brace === -1) return bracket;
+  if (bracket === -1) return brace;
+  return Math.min(brace, bracket);
+}
+
+/**
+ * Extract a JSON value from model text: bare JSON, a ```json fence, or JSON
+ * embedded in prose (first balanced object/array, skipping braces in strings).
+ */
+export function extractJsonPayload(raw: unknown): unknown {
+  if (raw && typeof raw === "object") return raw;
+  if (typeof raw !== "string") return undefined;
+  const text = raw.trim();
+  if (!text) return undefined;
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates: string[] = [];
+  if (fence?.[1]) candidates.push(fence[1].trim());
+  candidates.push(text);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // not bare JSON; fall through to the balanced scan
+    }
+  }
+  const start = candidateStart(text);
+  if (start === -1) return undefined;
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Structured output through a real, session-scoped opencode session.
+ *
+ * Free-tier providers (OpenCode Zen with `apiKey: "public"`) reject sessionless
+ * generate calls, which is what both the plugin Generate API and the
+ * sessionless `/api/experimental/generate` route use. A session-scoped generate
+ * is accepted, so retry there when the normal transport was refused.
+ *
+ * Returns undefined when the local server is not reachable, so the caller keeps
+ * the original error. Throws when the server answered but the result did not
+ * satisfy the schema.
+ */
+async function tryGenerateViaRealSession<T>(
+  args: SdkStructuredOutputArgs<T>
+): Promise<T | undefined> {
+  const config = readLocalServerConfig();
+  if (!config) return undefined;
+  const { providerID, modelID, systemPrompt, userPrompt, jsonSchema, schema } = args;
+
+  const created = await localServerFetch(config, "POST", "/api/session", {
+    title: INTERNAL_CAPTURE_SESSION_TITLE,
+  });
+  const sessionID =
+    (created as { data?: { id?: string } })?.data?.id ??
+    (created as { id?: string })?.id ??
+    undefined;
+  if (!sessionID) {
+    throw new Error(
+      "opencode-mem: session create returned no id for real-session structured output"
+    );
+  }
+  markInternalSession(sessionID);
+  trackInternalCaptureSession(sessionID);
+  try {
+    // Pin the model: the free tier exposes models only to session-scoped calls,
+    // and the session default may be a different (paid) model.
+    await localServerFetch(config, "POST", `/api/session/${sessionID}/model`, {
+      model: { id: modelID, providerID },
+    });
+    const prompt = [
+      systemPrompt,
+      "",
+      "Respond with a single JSON value that validates against this JSON Schema.",
+      "Return raw JSON only: no prose, no markdown fences, no commentary.",
+      "",
+      "JSON Schema:",
+      JSON.stringify(jsonSchema),
+      "",
+      "Task:",
+      userPrompt,
+    ].join("\n");
+    // The session-scoped generate route occasionally answers with an empty body
+    // (a transient provider hiccup rather than a schema problem), so retry
+    // before giving up. Each attempt re-uses the same session; a fresh one is
+    // not needed because nothing was committed.
+    const attempts = Math.max(1, Math.min(4, (args.retryCount ?? 1) + 1));
+    let lastText: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const generated = await localServerFetch(
+        config,
+        "POST",
+        `/api/session/${sessionID}/generate`,
+        { prompt }
+      );
+      const text =
+        (generated as { data?: { text?: unknown } })?.data?.text ??
+        (generated as { text?: unknown })?.text;
+      lastText = text;
+      const payload = extractJsonPayload(text);
+      if (payload !== undefined) {
+        return schema.parse(payload);
+      }
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+      }
+    }
+    throw new Error(
+      `opencode-mem: real-session generate returned no JSON after ${attempts} attempt(s) ` +
+        `(got: ${String(lastText).slice(0, 200)})`
+    );
+  } finally {
+    unmarkInternalSession(sessionID);
+    try {
+      await localServerFetch(config, "DELETE", `/api/session/${sessionID}`);
+    } catch {
+      // intentionally swallowed: cleanup is cosmetic
+    } finally {
+      untrackInternalCaptureSession(sessionID);
+    }
+  }
+}
+
+/**
+ * Whether a failed structured-output call is worth retrying through a real
+ * session.
+ *
+ * Only a provider refusal qualifies. Excluded:
+ * - timeout, step-budget abort, schema mismatch: these fail identically
+ *   through any transport, and retrying costs a live HTTP round-trip to the
+ *   host while hiding the real cause behind the fallback's error;
+ * - connectivity errors (ECONNREFUSED and friends): the fallback talks to the
+ *   same host, so if the host is unreachable the second attempt cannot
+ *   succeed either.
+ */
+function shouldTryRealSession(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/structured-output timed out/.test(message)) return false;
+  if (/structured-output aborted after/.test(message)) return false;
+  if (/returned no structured output/.test(message)) return false;
+  if (
+    /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EPIPE|socket hang up|fetch failed/i.test(message)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function buildQuery(directory?: string): string {

@@ -9,7 +9,7 @@ import {
   tokenizeQueryText,
   vectorToJson,
 } from "./vector-utils.js";
-import type { TursoDb, TursoTx } from "./turso-db.js";
+import type { SqlValue, TursoDb, TursoTx } from "./turso-db.js";
 
 function parseMetadata(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "string") return undefined;
@@ -179,9 +179,25 @@ export class TursoVectorSearch {
       const keywordSim = keywordScores.get(String(row.id)) ?? 0;
       const finalTagsSim = Math.max(tagsSim, exactMatchBoost);
       // With query text: blend vector + keyword. Without: keep classic 0.6/0.4.
-      const similarity = hasKeyword
-        ? contentSim * 0.5 + finalTagsSim * 0.3 + keywordSim * 0.2
-        : contentSim * 0.6 + finalTagsSim * 0.4;
+      //
+      // A signal the memory does NOT have is absent, not zero. Charging the
+      // full tags weight against a row with no tags vector capped every
+      // untagged memory at 0.5 - below the default 0.6 threshold - so it could
+      // be stored and then never read back, not even by a query repeating its
+      // own text. Weights are renormalized over the signals a row carries.
+      let similarity: number;
+      if (hasKeyword) {
+        const wContent = 0.5;
+        const wTags = finalTagsSim > 0 ? 0.3 : 0;
+        const wKeyword = keywordSim > 0 ? 0.2 : 0;
+        const total = wContent + wTags + wKeyword;
+        similarity = (contentSim * wContent + finalTagsSim * wTags + keywordSim * wKeyword) / total;
+      } else {
+        const wContent = 0.6;
+        const wTags = finalTagsSim > 0 ? 0.4 : 0;
+        const total = wContent + wTags;
+        similarity = (contentSim * wContent + finalTagsSim * wTags) / total;
+      }
 
       return {
         id: String(row.id),
@@ -359,26 +375,44 @@ export class TursoVectorSearch {
   async listMemories(
     db: TursoDb,
     containerTag: string,
-    limit: number
+    limit: number,
+    tagFilters: string[] = []
   ): Promise<Record<string, unknown>[]> {
-    return containerTag === ""
-      ? db.all(
-          `
+    const filters = Array.isArray(tagFilters)
+      ? tagFilters.map((t) => String(t).trim().toLowerCase()).filter((t) => t.length > 0)
+      : [];
+    const params: SqlValue[] = [];
+    const clauses: string[] = [];
+    if (containerTag !== "") {
+      clauses.push("container_tag = ?");
+      params.push(containerTag);
+    }
+    for (const tag of filters) {
+      // Tags are stored as one comma-separated string, so match with commas on
+      // both sides: otherwise "git" also matches "github" and "legit".
+      // escapeLikePattern() keeps `%`, `_` and `\` literal under ESCAPE.
+      clauses.push("(',' || COALESCE(tags, '') || ',') LIKE ? ESCAPE '\\'");
+      params.push(`%,${escapeLikePattern(tag)},%`);
+    }
+    if (clauses.length === 0) {
+      return db.all(
+        `
       SELECT * FROM memories
       ORDER BY is_pinned DESC, created_at DESC
       LIMIT ?
     `,
-          [limit]
-        )
-      : db.all(
-          `
+        [limit]
+      );
+    }
+    return db.all(
+      `
       SELECT * FROM memories
-      WHERE container_tag = ?
+      WHERE ${clauses.join(" AND ")}
       ORDER BY is_pinned DESC, created_at DESC
       LIMIT ?
     `,
-          [containerTag, limit]
-        );
+      [...params, limit]
+    );
   }
 
   async getAllMemories(db: TursoDb): Promise<Record<string, unknown>[]> {

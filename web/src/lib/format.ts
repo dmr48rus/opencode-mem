@@ -11,6 +11,7 @@ export function formatDate(isoString: string): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 

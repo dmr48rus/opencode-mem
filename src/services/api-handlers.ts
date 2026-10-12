@@ -1,4 +1,5 @@
 import { embeddingService } from "./embedding.js";
+import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
 import { tursoShardManager } from "./turso/shard-manager.js";
 import { tursoVectorSearch } from "./turso/vector-search.js";
 import { tursoConnectionManager } from "./turso/connection-manager.js";
@@ -25,6 +26,16 @@ interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+/** The only capability the tag migration needs from an external memory API. */
+interface ExternalTagProvider {
+  executeToolCall(
+    systemPrompt: string,
+    userPrompt: string,
+    toolSchema: unknown,
+    callId: string
+  ): Promise<{ success?: boolean; data?: { tags?: string[] }; error?: string }>;
 }
 
 interface Memory {
@@ -1559,13 +1570,99 @@ export async function handleRunTagMigrationBatch(
 ): Promise<ApiResponse<{ processed: number; total: number; hasMore: boolean; errors: number }>> {
   try {
     await ensureTursoReady();
-    const { AIProviderFactory } = await import("./ai/ai-provider-factory.js");
-    const { buildMemoryProviderConfig } = await import("./ai/provider-config.js");
-    const providerConfig = buildMemoryProviderConfig(CONFIG, {
-      maxIterations: 1,
-      iterationTimeout: 30000,
-    });
-    const provider = AIProviderFactory.createProvider(CONFIG.memoryProvider, providerConfig);
+
+    // Tag generation goes through the OpenCode provider when one is
+    // configured, and only falls back to the external memory API otherwise.
+    // Building the external provider up front threw "External API not
+    // configured" for EVERY run in an opencode-only configuration, which is
+    // the recommended one: auto-capture and user-profile-learning both prefer
+    // OpenCode and rethrow the provider error when the fallback is missing,
+    // so the migration is now the only path that could not use it at all.
+    let externalProvider: ExternalTagProvider | null = null;
+
+    const generateTagsViaOpencode = async (content: string): Promise<string[]> => {
+      const { generateStructuredOutput } = await loadOpencodeProvider();
+      const { getOpenCodeClient } = await import("./ai/profile-llm-client.js");
+      const { z } = await import("zod");
+      const client = await getOpenCodeClient();
+      const schema = z.object({ tags: z.array(z.string()) });
+      const result = await generateStructuredOutput({
+        client,
+        providerID: CONFIG.opencodeProvider as string,
+        modelID: CONFIG.opencodeModel as string,
+        ...(CONFIG.opencodeVariant ? { variant: CONFIG.opencodeVariant } : {}),
+        systemPrompt: "You are a technical tagger.",
+        userPrompt: `Generate 2-4 short technical tags for this memory content.\n\n${content}`,
+        schema,
+      });
+      const raw = (result as { tags?: string[] } | null)?.tags;
+      return (raw ?? [])
+        .map((t: string) => String(t).trim().toLowerCase())
+        .filter((t: string) => t.length > 0);
+    };
+
+    const generateTags = async (
+      content: string
+    ): Promise<{ ok: true; tags: string[] } | { ok: false; error: string }> => {
+      if (CONFIG.opencodeProvider && CONFIG.opencodeModel) {
+        try {
+          const tags = await generateTagsViaOpencode(content);
+          return tags.length > 0 ? { ok: true, tags } : { ok: false, error: "no tags returned" };
+        } catch (e) {
+          // A provider fault must fall through to the external API, exactly as
+          // auto-capture does, rather than failing the whole batch.
+          log("tag migration: opencode provider failed, falling back to external API", {
+            error: String(e),
+          });
+        }
+      }
+
+      // No config pre-check here on purpose: buildMemoryProviderConfig already
+      // owns that knowledge and throws a precise list of what is missing, and
+      // this try/catch turns it into a per-memory soft error. Duplicating the
+      // check above it would short-circuit providers the factory can still
+      // build (and would skip it entirely when neither provider is set, which
+      // is the case this whole path exists to handle).
+      try {
+        if (!externalProvider) {
+          const { AIProviderFactory } = await import("./ai/ai-provider-factory.js");
+          const { buildMemoryProviderConfig } = await import("./ai/provider-config.js");
+          const providerConfig = buildMemoryProviderConfig(CONFIG, {
+            maxIterations: 1,
+            iterationTimeout: 30000,
+          });
+          externalProvider = AIProviderFactory.createProvider(
+            CONFIG.memoryProvider,
+            providerConfig
+          ) as unknown as ExternalTagProvider;
+        }
+
+        const result = await externalProvider.executeToolCall(
+          "You are a technical tagger.",
+          `Generate 2-4 short technical tags for this memory content. Call the save_tags tool with a "tags" array.\n\n${content}`,
+          {
+            type: "function",
+            function: {
+              name: "save_tags",
+              description: "Save generated tags",
+              parameters: {
+                type: "object",
+                properties: { tags: { type: "array", items: { type: "string" } } },
+                required: ["tags"],
+              },
+            },
+          },
+          `migration_${content.length}`
+        );
+        if (result?.success && result.data?.tags) {
+          return { ok: true, tags: result.data.tags };
+        }
+        return { ok: false, error: result?.error ?? "no tags returned" };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    };
+
     const projectShards = await tursoShardManager.getAllShards("project", "");
 
     const allMemories: { memory: any; shard: any }[] = [];
@@ -1621,36 +1718,17 @@ export async function handleRunTagMigrationBatch(
         }
 
         if (currentTags.length === 0) {
-          const prompt = `Generate 2-4 short technical tags for this memory content. Call the save_tags tool with a "tags" array.\n\n${m.content}`;
-          const result = await provider.executeToolCall(
-            "You are a technical tagger.",
-            prompt,
-            {
-              type: "function",
-              function: {
-                name: "save_tags",
-                description: "Save generated tags",
-                parameters: {
-                  type: "object",
-                  properties: { tags: { type: "array", items: { type: "string" } } },
-                  required: ["tags"],
-                },
-              },
-            },
-            `migration_${m.id}`
-          );
-          if (result.success && result.data?.tags) {
-            currentTags = result.data.tags;
+          const tagged = await generateTags(m.content);
+          if (tagged.ok) {
+            currentTags = tagged.tags;
             await db.run("UPDATE memories SET tags = ? WHERE id = ?", [
               currentTags.join(","),
               m.id,
             ]);
           } else {
-            // Soft failure (e.g. empty tool-call args): do not mark processed.
+            // Soft failure (e.g. no provider): do not mark processed.
             // Cursor still advances below so the batch window moves forward.
-            const errorMsg = `Tag generation failed for memory ${m.id}: ${
-              result.error ?? "no tags returned"
-            }`;
+            const errorMsg = `Tag generation failed for memory ${m.id}: ${tagged.error}`;
             migrationProgress.errors.push(errorMsg);
             log("Migration error for memory", { id: m.id, error: errorMsg });
             continue;

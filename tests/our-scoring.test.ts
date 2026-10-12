@@ -112,16 +112,16 @@ describe("hybrid scoring renormalizes over present signals", () => {
     const shard = await tursoShardManager.createShard("project", "abcdef1234567890", 0);
     const db = await tursoConnectionManager.getConnection(shard.dbPath);
 
-    // Half-matching vector: cosine 0.5, so the untagged row scores 0.5 and
-    // must still be below the threshold. Renormalizing must not become a
-    // blanket "return everything".
-    const half = new Float32Array(768);
-    half[0] = Math.SQRT1_2;
-    half[1] = Math.SQRT1_2;
+    // 60 degrees off the query axis: cosine 0.5, so the untagged row scores
+    // 0.5 and must still be below the threshold. Renormalizing must not
+    // become a blanket "return everything".
+    const weak = new Float32Array(768);
+    weak[0] = 0.5;
+    weak[1] = Math.sqrt(3) / 2;
     await tursoVectorSearch.insertVector(db, {
-      id: "m_half",
+      id: "m_weak",
       content: "что-то частично похожее",
-      vector: half,
+      vector: weak,
       containerTag,
     } as any);
 

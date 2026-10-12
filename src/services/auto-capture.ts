@@ -243,7 +243,12 @@ async function capturePrompt(
     const errMsg = describeError(error);
     log(`Auto-capture final error after ${attempt} attempts`, { error: errMsg });
     if (CONFIG.showErrorToasts) {
-      const shortReason = errMsg.length > 100 ? errMsg.substring(0, 100) + "..." : errMsg;
+      // The toast carries the bare message: describeError() prefixes the error
+      // name for the log, and "Error: " in a user-facing toast is noise. The
+      // name is still available via the log line above.
+      const toastReason = error instanceof Error ? error.message : String(error);
+      const shortReason =
+        toastReason.length > 100 ? toastReason.substring(0, 100) + "..." : toastReason;
       await ctx.client?.tui
         .showToast({
           body: {

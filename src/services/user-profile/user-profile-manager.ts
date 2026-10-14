@@ -438,16 +438,40 @@ export class UserProfileManager {
     profileData: UserProfileData,
     promptsAnalyzed: number
   ): Promise<string> {
-    const db = await this.ready();
-    const id = `profile_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const now = Date.now();
-
     const cleanedData: UserProfileData = {
       preferences: safeArray(profileData.preferences),
       patterns: safeArray(profileData.patterns),
       workflows: safeArray(profileData.workflows),
       ...(profileData.learning_paths ? { learning_paths: profileData.learning_paths } : {}),
     };
+
+    // Creating the profile has to be routed like updating it. getActiveProfile
+    // returning null means "first round for this identity", and that is exactly
+    // when this branch runs -- while the local table still holds the row an
+    // earlier local-only build left behind. Falling through to the INSERT below
+    // then died on UNIQUE(user_id) and threw away an analysis that had already
+    // cost an LLM call; measured 14.10.2026, every learning round ended in
+    // "aborted: UNIQUE constraint failed: user_profiles.user_id" while the server
+    // reported no profile at all. The route is an upsert, so "create" is the same
+    // write as "update".
+    const remote = getRemoteStore();
+    if (remote) {
+      const result = await remote.putProfile({
+        userId,
+        profileData: cleanedData as unknown as Record<string, unknown>,
+        promptsAnalyzed,
+        changeSummary: "Initial profile creation",
+      });
+      // updateProfile resolves its identity from this map rather than from a
+      // lookup, so a profile created in this round has to register here too --
+      // otherwise the next round cannot tell which user it belongs to.
+      remoteUserIds.set(String(result.profileId), userId);
+      return String(result.profileId);
+    }
+
+    const db = await this.ready();
+    const id = `profile_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const now = Date.now();
 
     await db.run(
       `

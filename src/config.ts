@@ -114,6 +114,12 @@ interface OpenCodeMemConfig {
   webServerAuthPassword?: string;
   webServerAuthUsername?: string;
   webServerApiToken?: string;
+  remoteStorage?: {
+    enabled?: boolean;
+    baseUrl?: string;
+    apiToken?: string;
+    timeoutMs?: number;
+  };
   maxVectorsPerShard?: number;
   autoCleanupEnabled?: boolean;
   autoCleanupRetentionDays?: number;
@@ -241,6 +247,22 @@ const DEFAULTS: Required<
   memory?: {
     defaultScope?: "project" | "all-projects";
   };
+  /**
+   * When enabled, memories are read from and written to another machine running
+   * this same plugin behind its HTTP API, instead of local libsql files. The
+   * server owns the embedding model in that arrangement, so the client needs
+   * none of its own.
+   *
+   * Writes are only routed remotely once the write half of remote storage is in
+   * place; enabling this with read-only remote support would put reads on the
+   * server and writes on this machine, splitting the store in two.
+   */
+  remoteStorage: {
+    enabled: boolean;
+    baseUrl: string;
+    apiToken?: string;
+    timeoutMs: number;
+  };
 } = {
   storagePath: join(DATA_DIR, "data"),
   embeddingModel: "Xenova/nomic-embed-text-v1",
@@ -261,6 +283,11 @@ const DEFAULTS: Required<
   webServerEnabled: true,
   webServerPort: 4747,
   webServerHost: "127.0.0.1",
+  remoteStorage: {
+    enabled: false,
+    baseUrl: "",
+    timeoutMs: 30000,
+  },
   maxVectorsPerShard: 50000,
   autoCleanupEnabled: true,
   autoCleanupRetentionDays: 30,
@@ -1141,6 +1168,18 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     autoUpdate: fileConfig.autoUpdate ?? DEFAULTS.autoUpdate,
     memory: {
       defaultScope: fileConfig.memory?.defaultScope ?? DEFAULTS.memory.defaultScope,
+    },
+    remoteStorage: {
+      enabled: fileConfig.remoteStorage?.enabled ?? DEFAULTS.remoteStorage.enabled,
+      baseUrl: (fileConfig.remoteStorage?.baseUrl ?? DEFAULTS.remoteStorage.baseUrl).replace(
+        /\/+$/,
+        ""
+      ),
+      // env://VAR keeps the token out of the config file, same as webServerApiToken.
+      apiToken: fileConfig.remoteStorage?.apiToken
+        ? resolveSecretValue(fileConfig.remoteStorage.apiToken)
+        : undefined,
+      timeoutMs: fileConfig.remoteStorage?.timeoutMs ?? DEFAULTS.remoteStorage.timeoutMs,
     },
     compaction: {
       enabled: fileConfig.compaction?.enabled ?? DEFAULTS.compaction.enabled,

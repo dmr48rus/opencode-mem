@@ -70,6 +70,14 @@ export interface RemoteStorageClient {
   listMemories(tags: string[], page: number, pageSize: number): Promise<RemoteMemoryRecord[]>;
   getTags(): Promise<{ tag: string }[]>;
   stats(): Promise<Record<string, unknown>>;
+  addMemory(
+    data: RemoteMemoryRecord & { content: string; containerTag: string }
+  ): Promise<{ id: string }>;
+  updateMemory(
+    id: string,
+    data: { content?: string; type?: string; tags?: string[] }
+  ): Promise<void>;
+  deleteMemory(id: string, cascade?: boolean): Promise<void>;
 }
 
 const trimBase = (baseUrl: string): string => baseUrl.replace(/\/+$/, "");
@@ -182,6 +190,28 @@ export function createRemoteStorageClient(
     },
     async stats() {
       return await request<Record<string, unknown>>("/api/stats");
+    },
+
+    // Writes. The container tag travels with the memory because the server files
+    // records under the tag it is given (handleAddMemory requires it) -- it never
+    // guesses which project a memory belongs to. That is what makes a shared
+    // store possible: each client keeps its own scope, the server stores both.
+    // The server embeds, so no vector is computed here.
+    async addMemory(data) {
+      return await request<{ id: string }>("/api/memories", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    },
+    async updateMemory(id, data) {
+      await request(`/api/memories/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      });
+    },
+    async deleteMemory(id, cascade = false) {
+      const suffix = cascade ? "?cascade=true" : "";
+      await request(`/api/memories/${encodeURIComponent(id)}${suffix}`, { method: "DELETE" });
     },
   };
 }

@@ -6,8 +6,9 @@ import { CONFIG } from "../config.js";
 import { userPromptManager } from "./user-prompt/user-prompt-manager.js";
 import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
 import { truncateToMaxBytes, utf8ByteLength } from "../utils/context-limit.js";
+import { buildCaptureAttemptRecord, emitCaptureAttempt } from "./capture-diagnostics.js";
+import { classifyCaptureFailure, describeCaptureFailure, quickRetryDelayMs, } from "./capture-retry-policy.js";
 const MAX_TOOL_INPUT_LENGTH = 100;
-const RETRY_BASE_DELAY_MS = 2000;
 /**
  * Error text for the log. `error.message` alone is not enough: some SDK
  * rejections carry an empty message, and the log then reads {"error":""},
@@ -81,6 +82,7 @@ async function capturePrompt(ctx, sessionID, directory, prompt, maxRetries) {
         claimedPromptId = prompt.id;
         while (attempt < maxRetries) {
             attempt++;
+            const attemptStartedAt = Date.now();
             try {
                 if (!ctx.client) {
                     throw new Error("Client not available");
@@ -120,6 +122,14 @@ async function capturePrompt(ctx, sessionID, directory, prompt, maxRetries) {
                         sessionID,
                         type: summaryResult?.type,
                     });
+                    emitCaptureAttempt(buildCaptureAttemptRecord({
+                        source: "live-capture",
+                        sessionId: sessionID,
+                        attempt,
+                        outcome: "skipped",
+                        reason: null,
+                        durationMs: Date.now() - attemptStartedAt,
+                    }));
                     await userPromptManager.deletePrompt(prompt.id);
                     claimedPromptId = null;
                     return;
@@ -150,6 +160,14 @@ async function capturePrompt(ctx, sessionID, directory, prompt, maxRetries) {
                         sessionID,
                         memoryId: result.id,
                     });
+                    emitCaptureAttempt(buildCaptureAttemptRecord({
+                        source: "live-capture",
+                        sessionId: sessionID,
+                        attempt,
+                        outcome: "saved",
+                        reason: null,
+                        durationMs: Date.now() - attemptStartedAt,
+                    }));
                     if (CONFIG.showAutoCaptureToasts) {
                         await ctx.client?.tui
                             .showToast({
@@ -170,10 +188,34 @@ async function capturePrompt(ctx, sessionID, directory, prompt, maxRetries) {
             }
             catch (error) {
                 const errMsg = describeError(error);
+                const failure = describeCaptureFailure(error);
                 await userPromptManager.recordFailedAttempt(prompt.id);
+                emitCaptureAttempt(buildCaptureAttemptRecord({
+                    source: "live-capture",
+                    sessionId: sessionID,
+                    attempt,
+                    outcome: "failed",
+                    reason: failure.reason,
+                    httpStatus: failure.httpStatus,
+                    durationMs: Date.now() - attemptStartedAt,
+                }));
+                // A permanent failure answers the same way next time: a rejected token,
+                // a forbidden path or a reply that will not parse do not improve on a
+                // second identical request, and sleeping through the remaining attempts
+                // only delays the error the user eventually sees. Retries are kept for
+                // the cases a retry can fix -- no answer, a timeout, a rate limit, a
+                // 5xx, a briefly busy store.
+                if (classifyCaptureFailure(failure) === "permanent") {
+                    log(`Auto-capture permanent failure (attempt ${attempt}/${maxRetries})`, {
+                        error: errMsg,
+                        reason: failure.reason,
+                        httpStatus: failure.httpStatus,
+                    });
+                    throw error;
+                }
                 if (attempt < maxRetries) {
                     log(`Auto-capture warning (attempt ${attempt}/${maxRetries})`, { error: errMsg });
-                    await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)));
+                    await new Promise((resolve) => setTimeout(resolve, quickRetryDelayMs(attempt)));
                 }
                 else {
                     throw error;

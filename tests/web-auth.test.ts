@@ -66,7 +66,7 @@ describe("WebAuth", () => {
 
     it("rejects requests without an Authorization header", () => {
       const auth = new WebAuth({ password: "secret", username: "admin" });
-      const result = auth.check(new Request("http://x/api/memories"), "/api/memories");
+      const result = auth.check(new Request("http://x/assets/app.js"), "/assets/app.js");
       expect(result.ok).toBe(false);
       expect(result.response?.status).toBe(401);
       expect(result.response?.headers.get("WWW-Authenticate")).toContain(
@@ -76,61 +76,80 @@ describe("WebAuth", () => {
 
     it("rejects requests with the wrong credentials", () => {
       const auth = new WebAuth({ password: "right", username: "admin" });
-      const req = new Request("http://x/api/memories", {
+      const req = new Request("http://x/assets/app.js", {
         headers: { Authorization: basicHeader("admin", "wrong") },
       });
-      const result = auth.check(req, "/api/memories");
+      const result = auth.check(req, "/assets/app.js");
       expect(result.ok).toBe(false);
       expect(result.response?.status).toBe(401);
     });
 
     it("rejects requests with a non-Basic Authorization scheme", () => {
       const auth = new WebAuth({ password: "secret" });
-      const req = new Request("http://x/api/memories", {
+      const req = new Request("http://x/assets/app.js", {
         headers: { Authorization: "Bearer not-a-basic-token" },
       });
-      const result = auth.check(req, "/api/memories");
+      const result = auth.check(req, "/assets/app.js");
       expect(result.ok).toBe(false);
     });
 
     it("rejects requests with malformed Basic payload (no colon)", () => {
       const auth = new WebAuth({ password: "secret" });
       const encoded = Buffer.from("no-colon-here", "utf8").toString("base64");
-      const req = new Request("http://x/api/memories", {
+      const req = new Request("http://x/assets/app.js", {
         headers: { Authorization: `Basic ${encoded}` },
       });
-      const result = auth.check(req, "/api/memories");
+      const result = auth.check(req, "/assets/app.js");
       expect(result.ok).toBe(false);
     });
 
     it("accepts requests with the correct credentials", () => {
       const auth = new WebAuth({ password: "secret", username: "admin" });
-      const req = new Request("http://x/api/memories", {
+      const req = new Request("http://x/assets/app.js", {
         headers: { Authorization: basicHeader("admin", "secret") },
       });
-      const result = auth.check(req, "/api/memories");
+      const result = auth.check(req, "/assets/app.js");
       expect(result.ok).toBe(true);
     });
 
     it("treats username case-sensitively", () => {
       const auth = new WebAuth({ password: "secret", username: "Admin" });
-      const wrongCase = new Request("http://x/api/memories", {
+      const wrongCase = new Request("http://x/assets/app.js", {
         headers: { Authorization: basicHeader("admin", "secret") },
       });
-      expect(auth.check(wrongCase, "/api/memories").ok).toBe(false);
+      expect(auth.check(wrongCase, "/assets/app.js").ok).toBe(false);
 
-      const rightCase = new Request("http://x/api/memories", {
+      const rightCase = new Request("http://x/assets/app.js", {
         headers: { Authorization: basicHeader("Admin", "secret") },
       });
-      expect(auth.check(rightCase, "/api/memories").ok).toBe(true);
+      expect(auth.check(rightCase, "/assets/app.js").ok).toBe(true);
     });
 
     it("accepts credentials whose password contains a colon", () => {
       const auth = new WebAuth({ password: "pa:ss:word", username: "admin" });
-      const req = new Request("http://x/api/memories", {
+      const req = new Request("http://x/assets/app.js", {
         headers: { Authorization: basicHeader("admin", "pa:ss:word") },
       });
-      expect(auth.check(req, "/api/memories").ok).toBe(true);
+      expect(auth.check(req, "/assets/app.js").ok).toBe(true);
+    });
+
+    it("lets the API through to the token check, with no credentials at all", () => {
+      // The password guards the browser surface only. /api/* carries the
+      // x-opencode-mem-token header and the server checks it right after this
+      // call, so answering 401 here would lock the plugin's own client out of
+      // the store it reads and writes.
+      const auth = new WebAuth({ password: "secret", username: "admin" });
+      const result = auth.check(new Request("http://x/api/memories"), "/api/memories");
+      expect(result.ok).toBe(true);
+      expect(result.response).toBeUndefined();
+    });
+
+    it("lets the API through even when Basic credentials are wrong", () => {
+      const auth = new WebAuth({ password: "right", username: "admin" });
+      const req = new Request("http://x/api/search?q=x", {
+        headers: { Authorization: basicHeader("admin", "wrong") },
+      });
+      expect(auth.check(req, "/api/search").ok).toBe(true);
     });
   });
 

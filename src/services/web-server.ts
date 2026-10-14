@@ -30,6 +30,7 @@ import {
   handleDeletePrompt,
   handleBulkDeletePrompts,
   handleGetUserProfile,
+  handlePutUserProfile,
   handleGetProfileChangelog,
   handleGetProfileSnapshot,
   handleRefreshProfile,
@@ -656,6 +657,16 @@ export class WebServer {
       if (path === "/api/user-profile" && method === "GET") {
         const userId = url.searchParams.get("userId") || undefined;
         const result = await handleGetUserProfile(userId);
+        return this.jsonResponse(result);
+      }
+
+      // The counterpart of the GET above. It exists because a client with remote
+      // storage keeps no profile of its own: the profile is learned where the
+      // model runs and stored where the memories are, so the server needs a way
+      // to accept one.
+      if (path === "/api/user-profile" && method === "PUT") {
+        const body = (await req.json()) as any;
+        const result = await handlePutUserProfile(body);
         return this.jsonResponse(result);
       }
 

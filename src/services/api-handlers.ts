@@ -1063,6 +1063,66 @@ export async function handleGetUserProfile(userId?: string): Promise<ApiResponse
   }
 }
 
+export async function handlePutUserProfile(data: {
+  userId?: string;
+  profileData: Record<string, unknown>;
+  promptsAnalyzed?: number;
+  changeSummary?: string;
+}): Promise<ApiResponse<{ profileId: string; version: number; created: boolean }>> {
+  try {
+    const { userProfileManager } = await import("./user-profile/user-profile-manager.js");
+    const targetUserId = await resolveProfileUserId(data.userId);
+    if (!data.profileData) {
+      return { success: false, error: "profileData is required" };
+    }
+    const promptsAnalyzed = Number(data.promptsAnalyzed ?? 0);
+    const changeSummary = data.changeSummary || "synced from client";
+
+    // Upsert rather than a blind write: a client that has never seen this server
+    // posts a profile for a user the server does not know yet, and rejecting that
+    // would leave the store permanently empty.
+    const existing = await userProfileManager.getActiveProfile(targetUserId);
+    if (existing) {
+      const profileId = String((existing as unknown as { id: string }).id);
+      await userProfileManager.updateProfile(
+        profileId,
+        data.profileData as never,
+        promptsAnalyzed,
+        changeSummary
+      );
+      const updated = await userProfileManager.getProfileById(profileId);
+      return {
+        success: true,
+        data: {
+          profileId,
+          version: Number((updated as unknown as { version: number })?.version ?? 0),
+          created: false,
+        },
+      };
+    }
+    const profileId = await userProfileManager.createProfile(
+      targetUserId,
+      targetUserId,
+      targetUserId,
+      targetUserId,
+      data.profileData as never,
+      promptsAnalyzed
+    );
+    const created = await userProfileManager.getProfileById(profileId);
+    return {
+      success: true,
+      data: {
+        profileId,
+        version: Number((created as unknown as { version: number })?.version ?? 1),
+        created: true,
+      },
+    };
+  } catch (error) {
+    log("handlePutUserProfile: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
+}
+
 export async function handleGetProfileChangelog(
   profileId: string,
   limit: number = 5

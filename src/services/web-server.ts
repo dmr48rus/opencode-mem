@@ -656,7 +656,11 @@ export class WebServer {
 
       if (path === "/api/user-profile" && method === "GET") {
         const userId = url.searchParams.get("userId") || undefined;
-        const result = await handleGetUserProfile(userId);
+        // raw=1 is for a machine that reads, merges and writes the profile back.
+        // The default view strips the embeddings for display, and uploading that
+        // stripped copy would silently blind the merge to similarity.
+        const raw = url.searchParams.get("raw") === "1";
+        const result = await handleGetUserProfile(userId, raw);
         return this.jsonResponse(result);
       }
 

@@ -18,6 +18,8 @@
  * exercised without a plugin instance.
  */
 
+import { CONFIG } from "../../config.js";
+
 export interface RemoteStorageConfig {
   enabled: boolean;
   baseUrl: string;
@@ -79,9 +81,42 @@ export interface RemoteStorageClient {
     data: { content?: string; type?: string; tags?: string[] }
   ): Promise<void>;
   deleteMemory(id: string, cascade?: boolean): Promise<void>;
+  getProfile(userId?: string): Promise<Record<string, unknown> | null>;
+  putProfile(payload: {
+    userId?: string;
+    profileData: Record<string, unknown>;
+    promptsAnalyzed?: number;
+    changeSummary?: string;
+  }): Promise<{ profileId: string; version: number; created: boolean }>;
 }
 
 const trimBase = (baseUrl: string): string => baseUrl.replace(/\/+$/, "");
+
+/**
+ * The one place that decides whether this process talks to a remote store.
+ *
+ * It lives here rather than in client.ts so that low-level callers (the profile
+ * manager) can reach it without importing the client: that dependency direction
+ * is what would turn a future import in client.ts into a cycle.
+ *
+ * The factory takes its configuration as an argument so it can be exercised
+ * without a plugin instance; this accessor is the one that reads CONFIG.
+ */
+let cached: RemoteStorageClient | null = null;
+let resolved = false;
+
+export function getRemoteStore(): RemoteStorageClient | null {
+  if (!resolved) {
+    resolved = true;
+    cached = CONFIG.remoteStorage?.enabled ? createRemoteStorageClient(CONFIG.remoteStorage) : null;
+  }
+  return cached;
+}
+
+export function resetRemoteStore(): void {
+  cached = null;
+  resolved = false;
+}
 
 /**
  * Read path only. Writes land in the same file as the second half of this work;
@@ -213,6 +248,24 @@ export function createRemoteStorageClient(
     async deleteMemory(id, cascade = false) {
       const suffix = cascade ? "?cascade=true" : "";
       await request(`/api/memories/${encodeURIComponent(id)}${suffix}`, { method: "DELETE" });
+    },
+
+    // raw=1 is what makes this round trip lossless. The default profile view is
+    // stripped of centroid/anchor for display; a client that merged and wrote
+    // that back would silently lose the vectors its similarity match relies on.
+    async getProfile(userId) {
+      const params = new URLSearchParams({ raw: "1" });
+      if (userId) params.set("userId", userId);
+      const data = await request<{ exists?: boolean } & Record<string, unknown>>(
+        `/api/user-profile?${params.toString()}`
+      );
+      return data && data.exists === true ? data : null;
+    },
+    async putProfile(payload) {
+      return await request<{ profileId: string; version: number; created: boolean }>(
+        "/api/user-profile",
+        { method: "PUT", body: JSON.stringify(payload) }
+      );
     },
   };
 }

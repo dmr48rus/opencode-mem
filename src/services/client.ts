@@ -1,4 +1,4 @@
-import { embeddingService } from "./embedding.js";
+﻿import { embeddingService } from "./embedding.js";
 import { tursoShardManager } from "./turso/shard-manager.js";
 import { tursoVectorSearch } from "./turso/vector-search.js";
 import { tursoConnectionManager } from "./turso/connection-manager.js";
@@ -10,7 +10,7 @@ import {
   type MemoryScopeRef,
 } from "./memory-scope.js";
 import { CONFIG } from "../config.js";
-import { createRemoteStorageClient, type RemoteStorageClient } from "./turso/remote-storage.js";
+import { getRemoteStore, resetRemoteStore } from "./turso/remote-storage.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import type { MemoryRecord } from "./turso/types.js";
@@ -29,23 +29,6 @@ export type MemoryScope = "project" | "all-projects";
  * plugin resets, so a changed configuration is picked up rather than silently
  * ignored for the rest of the session.
  */
-let remoteStore: RemoteStorageClient | null = null;
-let remoteStoreResolved = false;
-
-export function getRemoteStore(): RemoteStorageClient | null {
-  if (!remoteStoreResolved) {
-    remoteStoreResolved = true;
-    remoteStore = CONFIG.remoteStorage?.enabled
-      ? createRemoteStorageClient(CONFIG.remoteStorage)
-      : null;
-  }
-  return remoteStore;
-}
-
-export function resetRemoteStore(): void {
-  remoteStore = null;
-  remoteStoreResolved = false;
-}
 
 function safeToISOString(timestamp: any): string {
   try {

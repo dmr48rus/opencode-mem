@@ -1023,7 +1023,10 @@ async function resolveProfileUserId(explicitUserId?: string): Promise<string> {
   return "unknown";
 }
 
-export async function handleGetUserProfile(userId?: string): Promise<ApiResponse<any>> {
+export async function handleGetUserProfile(
+  userId?: string,
+  raw = false
+): Promise<ApiResponse<any>> {
   try {
     const { userProfileManager } = await import("./user-profile/user-profile-manager.js");
     const targetUserId = await resolveProfileUserId(userId);
@@ -1054,7 +1057,7 @@ export async function handleGetUserProfile(userId?: string): Promise<ApiResponse
         createdAt: safeToISOString(profile.createdAt),
         lastAnalyzedAt: safeToISOString(profile.lastAnalyzedAt),
         totalPromptsAnalyzed: profile.totalPromptsAnalyzed,
-        profileData: toPublicProfileData(profileData),
+        profileData: raw ? profileData : toPublicProfileData(profileData),
       },
     };
   } catch (error) {

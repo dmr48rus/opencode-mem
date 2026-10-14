@@ -1,9 +1,10 @@
-import { join } from "node:path";
+﻿import { join } from "node:path";
 import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tursoConnectionManager } from "../turso/connection-manager.js";
 import type { TursoDb } from "../turso/turso-db.js";
 import { CONFIG } from "../../config.js";
+import { getRemoteStore } from "../turso/remote-storage.js";
 import type { UserProfile, UserProfileChangelog, UserProfileData } from "./types.js";
 import { safeArray } from "./profile-utils.js";
 import { EmbeddingService } from "../embedding.js";
@@ -73,6 +74,14 @@ function normalizeDescription(text: string): string {
 }
 
 const USER_PROFILES_DB_NAME = "user-profiles.db";
+
+/**
+ * Pairs a server-side profile id with the user it belongs to, for the duration of
+ * a learning round. The manager is given profile ids; the HTTP API is addressed
+ * by user. Populated by getActiveProfile in remote mode, consulted by
+ * updateProfile.
+ */
+const remoteUserIds = new Map<string, string>();
 const COLD_BUFFER_DEFAULT_KEY = "__unattributed__";
 
 export class UserProfileManager {
@@ -382,6 +391,32 @@ export class UserProfileManager {
   }
 
   async getActiveProfile(userId: string): Promise<UserProfile | null> {
+    const remote = getRemoteStore();
+    if (remote) {
+      // The server is where the profile lives. Nothing is cached locally on
+      // purpose: a second copy would let two machines disagree about the same
+      // profile, which is the failure this whole arrangement exists to remove.
+      const data = await remote.getProfile(userId);
+      if (!data) return null;
+      const profile = {
+        id: data.id,
+        userId: data.userId ?? userId,
+        displayName: data.displayName,
+        userName: data.userName,
+        userEmail: data.userEmail,
+        profileData: JSON.stringify(data.profileData ?? {}),
+        version: data.version,
+        createdAt: data.createdAt,
+        lastAnalyzedAt: data.lastAnalyzedAt,
+        totalPromptsAnalyzed: data.totalPromptsAnalyzed,
+        isActive: true,
+      } as unknown as UserProfile;
+      // updateProfile is handed a profile id, not a user id, so remember the
+      // pairing while the round is still open.
+      remoteUserIds.set(String(data.id), String(data.userId ?? userId));
+      return profile;
+    }
+
     const db = await this.ready();
     const row = await db.get(
       `
@@ -447,6 +482,26 @@ export class UserProfileManager {
     additionalPromptsAnalyzed: number,
     changeSummary: string
   ): Promise<boolean> {
+    const remote = getRemoteStore();
+    if (remote) {
+      const userId = remoteUserIds.get(profileId);
+      if (!userId) {
+        // Failing loudly beats writing to the wrong identity: a learning round
+        // that cannot name its user must not silently create a second profile.
+        throw new Error(
+          `remote profile update: no user id known for profile ${profileId}; ` +
+            `getActiveProfile must run before updateProfile`
+        );
+      }
+      await remote.putProfile({
+        userId,
+        profileData: profileData as unknown as Record<string, unknown>,
+        promptsAnalyzed: additionalPromptsAnalyzed,
+        changeSummary,
+      });
+      return true;
+    }
+
     const db = await this.ready();
     const now = Date.now();
 

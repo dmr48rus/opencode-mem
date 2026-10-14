@@ -68,6 +68,17 @@ export class WebAuth {
 
     if (path === "/api/health") return { ok: true };
 
+    // The API carries its own credential -- the x-opencode-mem-token header --
+    // and the server checks it immediately after this call (web-server.ts). A
+    // Basic challenge here would run BEFORE that check and refuse every API
+    // call the plugin's own client makes, so turning the UI password on would
+    // lock the client out of the store it just finished migrating.
+    //
+    // Division of labour: the password guards the browser-facing surface (the
+    // page and its assets), the token guards the API. Two mechanisms, two
+    // responsibilities, and neither one has to know about the other.
+    if (path.startsWith("/api/")) return { ok: true };
+
     const header = req.headers.get("Authorization");
     if (header) {
       const decoded = decodeBasicAuth(header);

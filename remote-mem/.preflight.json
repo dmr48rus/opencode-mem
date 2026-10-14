@@ -1,0 +1,8 @@
+{
+  "line_endings": "mixed_only",
+  "crlf_globs": [".bat", ".cmd", ".jsonc"],
+  "skip_dirs": ["fork", "node_modules", "dist", ".tmp-check", "tmp*"],
+  "junk_globs": ["tmp.*", "*.bak", "*~", "*.orig", "*.rej"],
+  "forbid_files": [],
+  "bom_ext": []
+}

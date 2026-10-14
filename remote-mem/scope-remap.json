@@ -1,0 +1,76 @@
+{
+  "//": "Explicit scope remapping for the memory migration. No name heuristics: two of the eight guesses produced by substring matching were wrong, and a wrong guess scatters memories under a tag that does not exist.",
+  "mappings": [
+    {
+      "from": "310bbad84695ff57",
+      "toPath": "X:/SecondBrain/01-Проекты/OpenCode-PyCharm",
+      "why": "opencode-ide-plugin is the PyCharm plugin project (user)"
+    },
+    {
+      "from": "281ec11cca4b3301",
+      "toPath": "X:/SecondBrain/01-Проекты/RustProxy",
+      "why": "cl is RustProxy (user)"
+    },
+    {
+      "from": "8fbb1d0f7b50588b",
+      "toPath": "X:/SecondBrain/01-Проекты/EFGIS-delete-areas",
+      "why": "QGIS continued as EFGIS-delete-areas (user)"
+    },
+    {
+      "from": "cc682592178de6e1",
+      "toPath": "X:/SecondBrain/01-Проекты/EFGIS-delete-areas",
+      "why": "second QGIS tag, same project (user)"
+    },
+    {
+      "from": "85606c2e69034760",
+      "toPath": "X:/ai/opencode-router",
+      "why": "Opencode-free-models moved to X:/ai/opencode-router (user)"
+    },
+    {
+      "from": "92d334ae9fcd28ea",
+      "toPath": "X:/SecondBrain/01-Проекты/LISA",
+      "why": "L-I-S-A renamed to LISA; old name absent on disk, new name present"
+    },
+    {
+      "from": "b752c4296b5a379a",
+      "toPath": "X:/SecondBrain/01-Проекты/CTP",
+      "why": "КТП is CTP in Latin script; CTP had no memories at all"
+    },
+    {
+      "from": "603a94b31056fa13",
+      "toPath": "X:/SecondBrain/01-Проекты/RustMdReader",
+      "why": "md-reader rewritten as RustMdReader; old name absent on disk"
+    },
+    {
+      "from": "8d9748ccda76a7fa",
+      "toPath": "X:/SecondBrain/01-Проекты/RustMdReader",
+      "why": "second md-reader tag, same project"
+    },
+    {
+      "from": "64b8f6901155737b",
+      "toPath": "X:/SecondBrain/01-Проекты/VK-Lipetskiy-filial",
+      "why": "underscores became hyphens"
+    },
+    {
+      "from": "9e7cceaed7fbecc5",
+      "toPath": "X:/SecondBrain/01-Проекты/RustProxy",
+      "why": "older tag for RustProxy, both present in the backups"
+    },
+    {
+      "from": "e6c7d36f39b37e06",
+      "toPath": "X:/SecondBrain/01-Проекты/SecondBrain-RustUI",
+      "why": "SecondBrainTray is SecondBrain-RustUI (user)"
+    }
+  ],
+  "leftUnmapped": {
+    "cc1f2e3755d336d3": "D:\\workflow\\code\\agrohimbase -- on another machine (user: leave as is)",
+    "3d4a59bc1642ecb1": "X:\\ai\\hermes -- in place (user), backup tag kept",
+    "31c5b3d9dd137e82": "X:\\ai\\hermes -- session-derived tag, kept as is",
+    "e6c7d36f39b37e06": "REMAPPED - was held pending confirmation, resolved by the user",
+    "6a676d393086011c": "X:\\ai\\opencode -- host install, gone",
+    "0251f7eddd043f4e": "temp clm-eval run directory",
+    "13392720006c5678": "openchamber session directory",
+    "a083c22ac3ff90cb": "X:\\ai\\opencode-tts -- gone",
+    "f4a46acbd07c87a8": "temp clm-eval run directory"
+  }
+}

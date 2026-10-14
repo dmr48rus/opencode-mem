@@ -1,0 +1,54 @@
+services:
+  # Memory store for Hermes. See AGENTS.md for what it does and does not do.
+  #
+  # TLS terminates at the Nginx Proxy Manager this host already runs, so no
+  # second proxy is added here: two terminators would fight over 80/443 and split
+  # certificate issuance. The store therefore publishes nothing to the internet
+  # and speaks plain HTTP to whoever is inside dockerbee.
+  remote-mem:
+    build: .
+    image: remote-mem:local
+    container_name: remote-mem
+    # on-failure with a small budget, not unless-stopped. A bad deploy is not
+    # fixed by retrying, and unless-stopped turns one misconfigured start into a
+    # loop that floods the log with the same line and hides the next real error.
+    # Docker resets the counter once the container has stayed up, so a genuine
+    # crash after a long healthy run is still restarted.
+    restart: on-failure:3
+    environment:
+      REMOTE_MEM_FORK: /app/fork
+      REMOTE_MEM_HOST: 0.0.0.0
+      REMOTE_MEM_PORT: "4747"
+      # The plugin resolves webServerAuthPassword through
+      # env://REMOTE_MEM_WEB_PASSWORD, so the variable must exist INSIDE the
+      # container. Compose does not pass .env in automatically: without this line
+      # the password resolves to nothing, auth stays disabled, and the UI comes
+      # back as a shell whose own scripts are refused as a non-loopback origin.
+      REMOTE_MEM_WEB_PASSWORD: "${REMOTE_MEM_WEB_PASSWORD:-}"
+    volumes:
+      # The only host state: shards, model cache, auth token, config copy.
+      # Bind mount rather than a named volume so borg backs up a plain directory
+      # and the state is readable without docker.
+      - ./data:/data
+    ports:
+      # Loopback only, and only for host-side debugging: the Nginx Proxy Manager
+      # reaches the store by container name over dockerbee, not through a
+      # published port. Nothing on the internet can reach this directly.
+      - "127.0.0.1:4747:4747"
+    # The model and the engine are single-writer; more than one replica on one
+    # directory corrupts the shard (Turso on Windows is single-owner, and on
+    # Linux the fork enables multiprocess_wal for processes on the same host only).
+    deploy:
+      replicas: 1
+
+networks:
+  # Existing network of this host, shared with the other services. The Nginx
+  # Proxy Manager lives here too and forwards to remote-mem:4747 by name, so no
+  # published port is involved in the serving path.
+  #
+  # external: compose will NOT create it, and fails loudly if it is missing.
+  # That is the wanted behaviour: silently creating a second network would give a
+  # store that nothing else can talk to, discovered only at call time.
+  default:
+    name: dockerbee
+    external: true

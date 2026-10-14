@@ -1,0 +1,10 @@
+# Keep the build context small and reproducible: the fork is copied by COPY
+# from the bundle, and data/ must never end up in an image layer -- it holds the
+# shards, the model cache and the auth token.
+data/
+bundle/
+.git/
+node_modules/
+fork/node_modules/
+.tmp-check/
+*.log

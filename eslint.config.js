@@ -10,6 +10,12 @@ export default ts.config(
       "dist/**",
       "node_modules/**",
       "out/**",
+      // The memory server ships inside this repository but is a separate tool
+      // with its own gate (.preflight.json) and its own house style. Linting it
+      // with the plugin's rules only produces errors about variables that were
+      // never wrong, and fixing them here would edit code this repository does
+      // not own.
+      "remote-mem/**",
       "web/dist/**",
       "web/node_modules/**",
     ],

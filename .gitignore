@@ -4,6 +4,8 @@ node_modules
 # output
 out
 dist
+!dist
+!dist/**
 *.tgz
 
 # code coverage
@@ -42,3 +44,12 @@ openspec
 .opencode
 .omo
 package/
+
+# fork-side additions
+remote-mem/bundle/
+remote-mem/.env
+data/
+*.db
+*.db-wal
+*.db-shm
+.profile-learning-coordination.db*

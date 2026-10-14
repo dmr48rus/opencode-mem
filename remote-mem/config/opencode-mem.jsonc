@@ -1,0 +1,51 @@
+{
+  // Server-side config for remote-mem. Mounted read-only at
+  // $HOME/.config/opencode/opencode-mem.jsonc (see docker-compose.yml).
+  // HOME=/data, so everything below resolves inside the volume.
+
+  // Embeddings are computed HERE, on the same model that produced the vectors
+  // already stored. Do not set embeddingApiUrl: a different model means a full
+  // reindex, and an unreachable embedding endpoint makes the WRITE fail
+  // outright (handleAddMemory embeds before inserting).
+  //
+  // The Xenova/ prefix is part of the model id, not decoration. Written without
+  // it, transformers.js asks huggingface.co/nomic-embed-text-v1, that
+  // repository does not exist, and the answer is a 401 -- while the prefetched
+  // cache sits under Xenova/, unused. The fork's own default IS prefixed
+  // (config.js:22), so an unprefixed value here silently overrides a correct one.
+  "embeddingModel": "Xenova/nomic-embed-text-v1",
+  // Must stay on: existing vectors were computed with task prefixes, and
+  // records indexed without them stop being found by their own words.
+  "embeddingUseTaskPrefixes": true,
+
+  // The store is this process. Auto-capture belongs to the client (it needs the
+  // local OpenCode for the summary), so there is nothing to capture here.
+  "autoCaptureEnabled": false,
+
+  // The vendored fork carries our own patches (vector-search weight
+  // normalisation, lazy external provider in the tag migration). A self-update
+  // would replace them with upstream builds. The plugin never starts
+  // auto-update on this path either; stated so nobody "fixes" it later.
+  "autoUpdate": false,
+
+  "webServerEnabled": true,
+
+  // The password guards the browser-facing surface: the page and its assets.
+  // Without it the plugin refuses every non-loopback origin outright
+  // (cors.ts:15-30), so the UI renders as a bare shell with 403 on its own
+  // scripts. With it set, httpAuthEnabled is true and the UI loads.
+  //
+  // It does NOT guard the API: web-auth.check now lets /api/* fall through to
+  // the token check that runs after it. That split is deliberate -- a single
+  // challenge before both would have locked the plugin's own client out of the
+  // store it just finished migrating.
+  //
+  // Password via env://, never a literal: this file is committed.
+  // The username is NOT resolved from env:// (config.ts passes webServerAuthUsername
+  // through unchanged, only the password goes through resolveSecretValue), so
+  // writing env:// here would set the literal username to the string
+  // "env://REMOTE_MEM_WEB_USERNAME". A username is not a secret, so it is simply
+  // written down.
+  "webServerAuthUsername": "admin",
+  "webServerAuthPassword": "env://REMOTE_MEM_WEB_PASSWORD",
+}

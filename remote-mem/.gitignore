@@ -1,0 +1,15 @@
+node_modules/
+fork/
+data/
+exports/
+.tmp-check/
+.tmp-migrate/
+.env
+*.log
+
+# Build artifacts of a pack run. pack.mjs recreates bundle/ from scratch, so an
+# archive left inside it is deleted by the next pack -- versioning one only means
+# committing a binary that no longer exists on disk.
+bundle/*.rar
+bundle/*.tar.gz
+bundle/*.zip

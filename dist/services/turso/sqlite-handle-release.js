@@ -1,0 +1,101 @@
+import { copyFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
+const GC_PASSES = 3;
+const FILE_LOCK_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 1600, 3200];
+export const RETRYABLE_FILE_LOCK_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
+const SQLITE_SIDE_SUFFIXES = ["-wal", "-shm", "-tshm"];
+/**
+ * Rename a SQLite/Turso database file together with its WAL/SHM/TSHM sidecars.
+ * Leaving a `.tmp-wal` behind after renaming only the main file drops commits.
+ * `-tshm` is Turso multiprocess WAL shared memory (multiprocess_wal).
+ */
+export function renameSqliteDatabase(fromPath, toPath) {
+    renameSync(fromPath, toPath);
+    for (const suffix of SQLITE_SIDE_SUFFIXES) {
+        const fromSide = `${fromPath}${suffix}`;
+        const toSide = `${toPath}${suffix}`;
+        if (existsSync(toSide)) {
+            unlinkSync(toSide);
+        }
+        if (existsSync(fromSide)) {
+            renameSync(fromSide, toSide);
+        }
+    }
+}
+/**
+ * Copy a SQLite/Turso database file together with its WAL/SHM/TSHM sidecars.
+ */
+export function copySqliteDatabase(fromPath, toPath) {
+    copyFileSync(fromPath, toPath);
+    for (const suffix of SQLITE_SIDE_SUFFIXES) {
+        const fromSide = `${fromPath}${suffix}`;
+        const toSide = `${toPath}${suffix}`;
+        if (existsSync(toSide)) {
+            unlinkSync(toSide);
+        }
+        if (existsSync(fromSide)) {
+            copyFileSync(fromSide, toSide);
+        }
+    }
+}
+/**
+ * Remove a SQLite/Turso database file together with WAL/SHM/TSHM sidecars.
+ */
+export function removeSqliteDatabase(dbPath) {
+    for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-tshm`]) {
+        if (existsSync(path))
+            unlinkSync(path);
+    }
+}
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
+ * libsql 0.5.x leaves prepared-statement handles alive until garbage collection.
+ * Collect them before Windows file swaps/removals that require exclusive access.
+ *
+ * Upstream: https://github.com/tursodatabase/libsql-js/issues/228
+ */
+export async function collectReleasedSqliteHandles() {
+    if (process.platform !== "win32")
+        return;
+    const runtime = globalThis;
+    const bunGc = runtime.Bun?.gc;
+    const globalGc = runtime.gc;
+    if (!bunGc && !globalGc)
+        return;
+    for (let pass = 0; pass < GC_PASSES; pass += 1) {
+        bunGc?.(true);
+        globalGc?.();
+        await delay(0);
+    }
+}
+/**
+ * Retries Windows file mutations while stable libsql releases native handles.
+ * The operation runs at most `maxRetries + 1` times: the initial attempt plus
+ * up to `maxRetries` retries. Non-lock errors and non-Windows platforms fail
+ * immediately. The default covers every entry in the delay table, matching the
+ * pre-parameter behavior exactly.
+ */
+export async function withSqliteFileLockRetry(operation, maxRetries = FILE_LOCK_RETRY_DELAYS_MS.length) {
+    if (!Number.isInteger(maxRetries) || maxRetries < 0) {
+        throw new TypeError("maxRetries must be a non-negative integer");
+    }
+    for (let attempt = 0;; attempt += 1) {
+        try {
+            return await operation();
+        }
+        catch (error) {
+            const code = error?.code;
+            const retryDelay = FILE_LOCK_RETRY_DELAYS_MS[attempt];
+            if (process.platform !== "win32" ||
+                !code ||
+                !RETRYABLE_FILE_LOCK_CODES.has(code) ||
+                retryDelay === undefined ||
+                attempt >= maxRetries) {
+                throw error;
+            }
+            await collectReleasedSqliteHandles();
+            await delay(retryDelay);
+        }
+    }
+}

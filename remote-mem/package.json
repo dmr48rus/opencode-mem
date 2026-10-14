@@ -1,0 +1,11 @@
+{
+  "name": "remote-mem",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Memory store for Hermes: vendored opencode-mem fork as a standalone HTTP service",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs"
+  }
+}

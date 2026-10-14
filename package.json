@@ -102,6 +102,8 @@
     "package.json"
   ],
   "lint-staged": {
+    "!dist/**": [],
+    "!remote-mem/**": [],
     "*.{js,mjs,cjs,ts}": [
       "eslint --fix",
       "prettier --write"

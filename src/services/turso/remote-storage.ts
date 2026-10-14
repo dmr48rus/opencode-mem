@@ -35,6 +35,7 @@ export interface RemoteMemoryRecord {
   updatedAt?: number;
   isPinned?: boolean;
   metadata?: unknown;
+  sessionId?: string;
   similarity?: number;
   displayName?: string;
   userName?: string;

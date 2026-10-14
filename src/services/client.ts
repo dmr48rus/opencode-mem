@@ -10,11 +10,42 @@ import {
   type MemoryScopeRef,
 } from "./memory-scope.js";
 import { CONFIG } from "../config.js";
+import { createRemoteStorageClient, type RemoteStorageClient } from "./turso/remote-storage.js";
 import { log } from "./logger.js";
 import type { MemoryType } from "../types/index.js";
 import type { MemoryRecord } from "./turso/types.js";
 
 export type MemoryScope = "project" | "all-projects";
+
+/**
+ * Remote storage lives at this seam, not in vector-search: the client is the
+ * plugin's entire conversation with the store, and it is also the only place
+ * that embeds. Routing here keeps roughly fifty call sites untouched and, more
+ * to the point, is what lets this machine drop its local embedding model --
+ * a facade below the embedding call would still load ONNX just to throw the
+ * vector away.
+ *
+ * The client is built once and cached. resetRemoteStore() is called when the
+ * plugin resets, so a changed configuration is picked up rather than silently
+ * ignored for the rest of the session.
+ */
+let remoteStore: RemoteStorageClient | null = null;
+let remoteStoreResolved = false;
+
+export function getRemoteStore(): RemoteStorageClient | null {
+  if (!remoteStoreResolved) {
+    remoteStoreResolved = true;
+    remoteStore = CONFIG.remoteStorage?.enabled
+      ? createRemoteStorageClient(CONFIG.remoteStorage)
+      : null;
+  }
+  return remoteStore;
+}
+
+export function resetRemoteStore(): void {
+  remoteStore = null;
+  remoteStoreResolved = false;
+}
 
 function safeToISOString(timestamp: any): string {
   try {
@@ -102,6 +133,7 @@ export class LocalMemoryClient {
   reset(): void {
     this.isInitialized = false;
     this.initPromise = null;
+    resetRemoteStore();
   }
 
   async close(): Promise<void> {
@@ -112,6 +144,19 @@ export class LocalMemoryClient {
 
   async searchMemories(query: string, containerTag: string, scope: MemoryScope = "project") {
     try {
+      const remote = getRemoteStore();
+      if (remote) {
+        // The server embeds the query, so this client needs no local model.
+        // all-projects deliberately sends no tag: the endpoint then searches
+        // every project shard, which is the same semantics the local path gets
+        // from resolving the scope to all shards.
+        const items = await remote.search(query, {
+          tags: scope === "all-projects" ? [] : [containerTag],
+          pageSize: CONFIG.maxMemories,
+        });
+        return { success: true as const, results: items, total: items.length, timing: 0 };
+      }
+
       await this.initialize();
 
       const queryVector = await embeddingService.embedWithTimeout(query, { task: "query" });
@@ -170,6 +215,44 @@ export class LocalMemoryClient {
     }
   ) {
     try {
+      const remote = getRemoteStore();
+      if (remote) {
+        // No local embedding: the server computes the vector on the way in, which
+        // is what lets this machine drop its ONNX model entirely. The id comes
+        // back from the server because it is the one that owns the record.
+        const {
+          displayName,
+          userName,
+          userEmail,
+          projectPath,
+          projectName,
+          gitRepoUrl,
+          type,
+          tags: metaTags,
+          ...dynamicMetadata
+        } = metadata || {};
+        const sessionId =
+          typeof dynamicMetadata.sessionID === "string" ? dynamicMetadata.sessionID : undefined;
+        const created = await remote.addMemory({
+          id: "",
+          content,
+          containerTag,
+          tags: metaTags,
+          type,
+          displayName,
+          userName,
+          userEmail,
+          projectPath,
+          projectName,
+          gitRepoUrl,
+          // metadata rides along so searchMemoriesBySessionID still finds this
+          // capture; without it the same conversation would be captured again.
+          sessionId,
+          metadata: dynamicMetadata,
+        });
+        return { success: true as const, id: created.id };
+      }
+
       await this.initialize();
 
       const tags = metadata?.tags || [];

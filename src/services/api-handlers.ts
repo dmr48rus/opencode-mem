@@ -391,6 +391,14 @@ export async function handleAddMemory(data: {
   projectPath?: string;
   projectName?: string;
   gitRepoUrl?: string;
+  /**
+   * Caller-supplied metadata. Auto-capture stores the session id and capture
+   * facts here, and searchMemoriesBySessionID reads them back; without this the
+   * HTTP path drops them, every capture looks like a new session, and the same
+   * conversation gets captured again and again.
+   */
+  metadata?: Record<string, unknown>;
+  sessionId?: string;
 }): Promise<ApiResponse<{ id: string }>> {
   try {
     if (!data.content || !data.containerTag) {
@@ -434,7 +442,8 @@ export async function handleAddMemory(data: {
         projectPath: data.projectPath,
         projectName: data.projectName,
         gitRepoUrl: data.gitRepoUrl,
-        metadata: JSON.stringify({ source: "api" }),
+        metadata: JSON.stringify({ source: "api", ...(data.metadata ?? {}) }),
+        sessionId: data.sessionId,
       };
       const db = await tursoConnectionManager.getConnection(shard.dbPath);
       await tursoVectorSearch.insertVector(db, record);

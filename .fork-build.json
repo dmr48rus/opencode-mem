@@ -1,0 +1,7 @@
+{
+  "branch": "patched/2.31.0",
+  "note": "committed artifact: dist/ is what the build vendors, not a local rebuild",
+  "commit": "715bf97",
+  "builtAt": "2026-10-14T19:41:00+03:00",
+  "distFiles": 288
+}

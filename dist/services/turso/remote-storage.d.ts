@@ -54,6 +54,36 @@ export declare class RemoteStorageError extends Error {
     constructor(message: string, status: number, path: string);
 }
 type FetchLike = typeof fetch;
+/**
+ * The server's shape for a skill, which is what `GET /api/skills` returns.
+ *
+ * It is NOT the client's SkillRecord and deliberately so: the columns
+ * container_tag and autoinvoke exist in both, but created_at / updated_at come
+ * back as ISO strings here and as epoch numbers in the local row. Converting
+ * once, in skills-manager, keeps that knowledge in one place instead of
+ * spreading "maybe it is a date, maybe it is a number" across the call sites.
+ */
+export interface RemoteSkillRecord {
+    id: string;
+    name: string;
+    description: string;
+    content: string;
+    autoinvoke: boolean;
+    enabled: boolean;
+    containerTag: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+}
+export interface RemoteSkillInput {
+    id: string;
+    name: string;
+    description?: string;
+    content: string;
+    autoinvoke?: boolean;
+    enabled?: boolean;
+    containerTag?: string | null;
+}
+export type RemoteSkillUpdate = Partial<Omit<RemoteSkillInput, "id">>;
 export interface RemoteStorageClient {
     search(query: string, options?: RemoteSearchOptions): Promise<RemoteMemoryRecord[]>;
     getMemoryById(id: string): Promise<RemoteMemoryRecord | null>;
@@ -85,6 +115,13 @@ export interface RemoteStorageClient {
         version: number;
         created: boolean;
     }>;
+    listSkills(options?: {
+        enabledOnly?: boolean;
+    }): Promise<RemoteSkillRecord[]>;
+    getSkill(id: string): Promise<RemoteSkillRecord | null>;
+    createSkill(payload: RemoteSkillInput): Promise<RemoteSkillRecord>;
+    updateSkill(id: string, payload: RemoteSkillUpdate): Promise<RemoteSkillRecord>;
+    deleteSkill(id: string): Promise<void>;
 }
 export declare function getRemoteStore(): RemoteStorageClient | null;
 export declare function resetRemoteStore(): void;

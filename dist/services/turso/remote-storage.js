@@ -182,5 +182,45 @@ export function createRemoteStorageClient(config, fetchImpl) {
         async putProfile(payload) {
             return await request("/api/user-profile", { method: "PUT", body: JSON.stringify(payload) });
         },
+        // Skills. The server exposes /api/skills already, so this is a plain
+        // mapping onto routes that were already there -- no server change, and the
+        // server's own local store becomes the shared one.
+        async listSkills(options) {
+            const params = new URLSearchParams();
+            if (options?.enabledOnly)
+                params.set("enabledOnly", "true");
+            const query = params.toString();
+            const data = await request(query ? `/api/skills?${query}` : "/api/skills");
+            return Array.isArray(data?.items) ? data.items : [];
+        },
+        async getSkill(id) {
+            try {
+                return await request(`/api/skills/${encodeURIComponent(id)}`);
+            }
+            catch (error) {
+                // "There is no such skill" and "the server could not be asked" must not
+                // arrive as the same value: the first is an answer, the second is a fault.
+                if (error instanceof RemoteStorageError && error.status === 404)
+                    return null;
+                throw error;
+            }
+        },
+        async createSkill(payload) {
+            return await request("/api/skills", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            });
+        },
+        async updateSkill(id, payload) {
+            return await request(`/api/skills/${encodeURIComponent(id)}`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            });
+        },
+        async deleteSkill(id) {
+            // No boolean here: this either performed the delete or it did not, and a
+            // false would read as "there was nothing to delete".
+            await request(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
+        },
     };
 }

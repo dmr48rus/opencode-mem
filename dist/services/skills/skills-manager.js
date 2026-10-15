@@ -4,6 +4,7 @@ import { tursoConnectionManager } from "../turso/connection-manager.js";
 import { CONFIG } from "../../config.js";
 import { log } from "../logger.js";
 import { isValidSkillId } from "./types.js";
+import { getRemoteStore, } from "../turso/remote-storage.js";
 const SKILLS_DB_NAME = "skills.db";
 const skillChangeListeners = new Set();
 export function onSkillsChanged(listener) {
@@ -31,6 +32,29 @@ function rowToSkill(row) {
         containerTag: row.container_tag == null ? null : String(row.container_tag),
         createdAt: Number(row.created_at),
         updatedAt: Number(row.updated_at),
+    };
+}
+/**
+ * The server sends ISO timestamps where the local row has epoch numbers. A
+ * missing or unparseable date becomes 0 rather than NaN: every caller treats
+ * updatedAt as an ordering key, and NaN makes an ORDER BY non-deterministic
+ * without any error to notice.
+ */
+function remoteToSkill(remote) {
+    const epoch = (value) => {
+        const parsed = value ? Date.parse(value) : NaN;
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+        id: remote.id,
+        name: remote.name,
+        description: remote.description ?? "",
+        content: remote.content ?? "",
+        autoinvoke: remote.autoinvoke !== false,
+        enabled: remote.enabled !== false,
+        containerTag: remote.containerTag ?? null,
+        createdAt: epoch(remote.createdAt),
+        updatedAt: epoch(remote.updatedAt),
     };
 }
 export class SkillsManager {
@@ -94,6 +118,16 @@ export class SkillsManager {
         await rm(dir, { recursive: true, force: true });
     }
     async list(options) {
+        const remote = getRemoteStore();
+        if (remote) {
+            // Visibility is no longer per project. container_tag stays in the schema
+            // and is still written, but it is not a filter here: the shared store is
+            // global, exactly like remote memory, and a skill that is in it is in it
+            // for every project. Passing tag= would hide global rows from a client
+            // that has no project tag of its own.
+            const items = await remote.listSkills({ enabledOnly: options?.enabledOnly });
+            return items.map(remoteToSkill);
+        }
         const db = await this.getDb();
         const clauses = [];
         const args = [];
@@ -114,6 +148,11 @@ export class SkillsManager {
         return rows.map(rowToSkill);
     }
     async get(id) {
+        const remote = getRemoteStore();
+        if (remote) {
+            const found = await remote.getSkill(id);
+            return found ? remoteToSkill(found) : null;
+        }
         const db = await this.getDb();
         const row = await db.get(`SELECT * FROM skills WHERE id = ?`, [id]);
         return row ? rowToSkill(row) : null;
@@ -133,6 +172,22 @@ export class SkillsManager {
         const existing = await this.get(id);
         if (existing)
             throw new Error(`Skill already exists: ${id}`);
+        const remote = getRemoteStore();
+        if (remote) {
+            const payload = {
+                id,
+                name,
+                description: (input.description ?? "").trim(),
+                content,
+                autoinvoke: input.autoinvoke !== false,
+                enabled: input.enabled !== false,
+            };
+            const created = remoteToSkill(await remote.createSkill(payload));
+            // No SKILL.md is written on this path: the host registers embedded skills
+            // (adapter.ts), so a local file would be a second copy of the truth.
+            notifySkillsChanged();
+            return created;
+        }
         const now = Date.now();
         const db = await this.getDb();
         await db.run(`INSERT INTO skills (
@@ -172,6 +227,13 @@ export class SkillsManager {
         const enabled = update.enabled !== undefined ? update.enabled : existing.enabled;
         const containerTag = update.containerTag !== undefined ? update.containerTag : existing.containerTag;
         const now = Date.now();
+        const remote = getRemoteStore();
+        if (remote) {
+            const patch = { name, description, content, autoinvoke, enabled };
+            const updated = remoteToSkill(await remote.updateSkill(id, patch));
+            notifySkillsChanged();
+            return updated;
+        }
         const db = await this.getDb();
         await db.run(`UPDATE skills SET
         name = ?, description = ?, content = ?, autoinvoke = ?, enabled = ?,
@@ -193,6 +255,12 @@ export class SkillsManager {
         const existing = await this.get(id);
         if (!existing)
             return false;
+        const remote = getRemoteStore();
+        if (remote) {
+            await remote.deleteSkill(id);
+            notifySkillsChanged();
+            return true;
+        }
         const db = await this.getDb();
         await db.run(`DELETE FROM skills WHERE id = ?`, [id]);
         await this.removeSkillFile(id);

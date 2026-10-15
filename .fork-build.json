@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote storage, profile over HTTP, capture diagnostics and retry policy",
-  "commit": "8b7bd34",
-  "builtAt": "2026-10-14T21:54:37.1085067+03:00",
+  "note": "remote storage for memory, profile and skills; capture diagnostics; UI password split",
+  "commit": "f8bbd50",
+  "builtAt": "2026-10-15T06:53:39.8519863+03:00",
   "distFiles": 294
 }

@@ -44,6 +44,13 @@ export async function registerV2Adapter(ctx, legacy) {
     /** Skill IDs last registered from opencode-mem DB (so we can remove stale ones). */
     const registeredSkillIds = new Set();
     async function registerDbSkills() {
+        // Before the early return, so the log says which of the two possible
+        // reasons applies when nothing is registered: no skill hook on this host,
+        // or a hook without a transform.
+        log("Skill registration: entering", {
+            enabled: !!ctx.skill?.transform,
+            type: typeof ctx.skill?.transform,
+        });
         if (!ctx.skill?.transform)
             return;
         // No project tag. The skills store is the shared server-side store, and a

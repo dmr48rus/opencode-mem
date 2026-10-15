@@ -5,10 +5,19 @@ import { loadOpencodeProvider } from "../services/ai/opencode-provider-loader.js
 import { registerV2Adapter } from "./adapter.js";
 import { createLegacyClient } from "./legacy-client.js";
 import { MemToast } from "./toast-rpc.js";
+import { log } from "../services/logger.js";
 
 const OpenCodeMemPluginV2: Plugin = {
   id: "opencode-mem",
   async setup(ctx) {
+    // Which entry the host loads is not observable from the outside: this one
+    // wraps the same plugin as dist/plugin.js, so both emit the same startup
+    // lines. Without this marker there is no way to tell "the v2 entry never
+    // loaded" from "it loaded and found no ctx.skill".
+    log("v2 plugin entry loaded", {
+      hasSkillHook: !!ctx.skill,
+      hasTransform: typeof ctx.skill?.transform === "function",
+    });
     // Server Context has no ui.toast; bridge toast intents to the ./tui companion.
     const toastRpc = await ctx.rpc.register(MemToast, {});
     const legacyClient = createLegacyClient(ctx, toastRpc);

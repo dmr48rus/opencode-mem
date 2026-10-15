@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote store; skill registration instrumentation",
-  "commit": "43c28c7",
-  "builtAt": "2026-10-15T08:01:46.8629228+03:00",
+  "note": "remote store; skills registered with the host, ownership-scoped",
+  "commit": "73b6d79",
+  "builtAt": "2026-10-15T08:05:05.5798034+03:00",
   "distFiles": 294
 }

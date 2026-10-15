@@ -67,51 +67,63 @@ export async function registerV2Adapter(ctx, legacy) {
             return;
         }
         const nextIds = new Set(skills.map((skill) => skill.id));
-        try {
-            await ctx.skill.transform((editor) => {
-                for (const id of registeredSkillIds) {
-                    if (!nextIds.has(id) && editor.get(id)) {
-                        editor.remove(id);
-                    }
+        // The bookkeeping lives inside the callback on purpose. Measured 15.10.2026:
+        // await on transform() neither resolves nor rejects during startup -- the
+        // host invokes the callback itself and the skill does reach the registry --
+        // so anything placed after the await never runs. Stale removal depends on
+        // knowing what was registered last time, and it has to be recorded where the
+        // registration actually happens.
+        void ctx.skill
+            .transform((editor) => {
+            // Only ids this plugin registered may be removed. The editor also holds
+            // the host's own file-based skills, which belong to the user and are not
+            // in this database; sweeping editor.list() for "not ours" deletes those
+            // too. Measured 15.10.2026: that mistake took autoresearch, clm-context,
+            // init-second-brain and reverse-engineer-anything out of the skill list.
+            for (const id of registeredSkillIds) {
+                if (!nextIds.has(id) && editor.get(id)) {
+                    editor.remove(id);
                 }
-                for (const skill of skills) {
-                    // Skill.Info requires an absolute path even for a skill whose content
-                    // travels inline, so the SKILL.md is written next to the store. It is
-                    // a derived copy of what the server holds, not a second source: the
-                    // row on the server is what create/update/delete act on.
-                    const path = skillsManager.skillPath(skill.id);
-                    const absolutePath = isAbsolute(path) ? path : resolve(path);
-                    const payload = {
-                        id: skill.id,
-                        name: skill.name,
-                        description: skill.description || undefined,
-                        autoinvoke: skill.autoinvoke,
-                        path: absolutePath,
-                        content: skill.content,
-                    };
-                    if (editor.get(skill.id)) {
-                        editor.update(skill.id, (entry) => {
-                            entry.name = payload.name;
-                            entry.description = payload.description;
-                            entry.autoinvoke = payload.autoinvoke;
-                            entry.path = payload.path;
-                            entry.content = payload.content;
-                        });
-                    }
-                    else {
-                        editor.add(payload);
-                    }
-                }
-            });
+            }
             registeredSkillIds.clear();
             for (const id of nextIds)
                 registeredSkillIds.add(id);
-        }
-        catch (error) {
-            // A registration failure must not take the plugin down: the rest of the
-            // memory system is independent of whether the host accepted a skill.
+            for (const skill of skills) {
+                // Skill.Info requires an absolute path even for a skill whose content
+                // travels inline, so the SKILL.md is written next to the store. It is
+                // a derived copy of what the server holds, not a second source: the
+                // row on the server is what create/update/delete act on.
+                const path = skillsManager.skillPath(skill.id);
+                const absolutePath = isAbsolute(path) ? path : resolve(path);
+                const payload = {
+                    id: skill.id,
+                    name: skill.name,
+                    description: skill.description || undefined,
+                    autoinvoke: skill.autoinvoke,
+                    path: absolutePath,
+                    content: skill.content,
+                };
+                if (editor.get(skill.id)) {
+                    editor.update(skill.id, (entry) => {
+                        entry.name = payload.name;
+                        entry.description = payload.description;
+                        entry.autoinvoke = payload.autoinvoke;
+                        entry.path = payload.path;
+                        entry.content = payload.content;
+                    });
+                }
+                else {
+                    editor.add(payload);
+                }
+            }
+            log("Registered shared skills with OpenCode", {
+                count: skills.length,
+                ids: skills.map((skill) => skill.id),
+            });
+        })
+            .catch((error) => {
             log("Shared skill registration failed", { error: String(error) });
-        }
+        });
     }
     await ctx.tool.transform((editor) => editor.add({
         name: "memory",

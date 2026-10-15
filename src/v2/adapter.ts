@@ -82,13 +82,26 @@ export async function registerV2Adapter(ctx: Context, legacy: any) {
 
     const nextIds = new Set(skills.map((skill) => skill.id));
 
-    try {
-      await ctx.skill.transform((editor) => {
+    // The bookkeeping lives inside the callback on purpose. Measured 15.10.2026:
+    // await on transform() neither resolves nor rejects during startup -- the
+    // host invokes the callback itself and the skill does reach the registry --
+    // so anything placed after the await never runs. Stale removal depends on
+    // knowing what was registered last time, and it has to be recorded where the
+    // registration actually happens.
+    void ctx.skill
+      .transform((editor) => {
+        // Only ids this plugin registered may be removed. The editor also holds
+        // the host's own file-based skills, which belong to the user and are not
+        // in this database; sweeping editor.list() for "not ours" deletes those
+        // too. Measured 15.10.2026: that mistake took autoresearch, clm-context,
+        // init-second-brain and reverse-engineer-anything out of the skill list.
         for (const id of registeredSkillIds) {
           if (!nextIds.has(id) && editor.get(id)) {
             editor.remove(id);
           }
         }
+        registeredSkillIds.clear();
+        for (const id of nextIds) registeredSkillIds.add(id);
 
         for (const skill of skills) {
           // Skill.Info requires an absolute path even for a skill whose content
@@ -118,15 +131,15 @@ export async function registerV2Adapter(ctx: Context, legacy: any) {
             editor.add(payload);
           }
         }
-      });
 
-      registeredSkillIds.clear();
-      for (const id of nextIds) registeredSkillIds.add(id);
-    } catch (error) {
-      // A registration failure must not take the plugin down: the rest of the
-      // memory system is independent of whether the host accepted a skill.
-      log("Shared skill registration failed", { error: String(error) });
-    }
+        log("Registered shared skills with OpenCode", {
+          count: skills.length,
+          ids: skills.map((skill) => skill.id),
+        });
+      })
+      .catch((error: unknown) => {
+        log("Shared skill registration failed", { error: String(error) });
+      });
   }
 
   await ctx.tool.transform((editor) =>

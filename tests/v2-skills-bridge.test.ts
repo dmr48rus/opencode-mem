@@ -166,6 +166,69 @@ describe("V2 skills bridge helpers", () => {
     await cleanup();
   });
 
+  it("leaves the host's own file skills alone", async () => {
+    const { skillsManager } = await import("../src/services/skills/skills-manager.js");
+    await skillsManager.create({
+      id: "our-skill",
+      name: "Ours",
+      content: "ours",
+      enabled: true,
+    });
+
+    // The registry holds skills this plugin never registered: the host's own
+    // file-based ones. list() is implemented on purpose, so a sweep over "not in
+    // our database" would actually run here instead of crashing on a missing
+    // method and hiding itself.
+    const registry = new Map<string, any>([
+      ["autoresearch", { id: "autoresearch", name: "autoresearch", content: "file" }],
+      ["clm-context", { id: "clm-context", name: "clm-context", content: "file" }],
+    ]);
+
+    const ctx = {
+      location: {
+        directory: "/workspace/project",
+        project: { id: "project", directory: "/workspace/project", canonical: "project" },
+      },
+      tool: { transform: async (cb: (e: any) => void) => cb({ add() {} }) },
+      skill: {
+        transform: async (cb: (editor: any) => void) => {
+          cb({
+            list: () => [...registry.values()],
+            get: (id: string) => registry.get(id),
+            add: (skill: any) => registry.set(skill.id, { ...skill }),
+            update: (id: string, mutate: (s: any) => void) => {
+              const current = registry.get(id);
+              if (current) mutate(current);
+            },
+            remove: (id: string) => registry.delete(id),
+          });
+        },
+        reload: async () => {},
+      },
+      session: { hook: async () => {} },
+      event: {
+        async *subscribe({ signal }: { signal: AbortSignal }) {
+          await new Promise<void>((r) =>
+            signal.addEventListener("abort", () => r(), { once: true })
+          );
+          if (signal.aborted) yield null;
+        },
+      },
+    } as any;
+
+    const cleanup = await registerV2Adapter(ctx, {
+      tool: { memory: { description: "memory", execute: async () => "{}" } },
+      event: async () => {},
+      dispose: async () => {},
+    });
+
+    expect(registry.has("our-skill")).toBe(true);
+    expect(registry.has("autoresearch")).toBe(true);
+    expect(registry.has("clm-context")).toBe(true);
+
+    await cleanup();
+  });
+
   it("builds OpenCode HTTP catalog markdown with autoinvoke metadata", async () => {
     const { skillsManager } = await import("../src/services/skills/skills-manager.js");
     await skillsManager.create({

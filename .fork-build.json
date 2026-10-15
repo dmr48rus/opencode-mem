@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote storage for memory, profile and skills; skills registered with the host",
-  "commit": "99523a4",
-  "builtAt": "2026-10-15T07:24:07.2424558+03:00",
+  "note": "remote store; skill registration instrumentation",
+  "commit": "43c28c7",
+  "builtAt": "2026-10-15T08:01:46.8629228+03:00",
   "distFiles": 294
 }

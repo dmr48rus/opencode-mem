@@ -205,6 +205,10 @@ export class SkillsManager {
     const existing = await this.get(id);
     if (existing) throw new Error(`Skill already exists: ${id}`);
 
+    // The row lives on the server, but the SKILL.md is written here on both
+    // paths: Skill.Info requires an absolute path even when the content travels
+    // inline, and that path has to exist. It is a derived copy of the server's
+    // row, never a second source of truth.
     const remote = getRemoteStore();
     if (remote) {
       const payload: RemoteSkillInput = {
@@ -216,8 +220,7 @@ export class SkillsManager {
         enabled: input.enabled !== false,
       };
       const created = remoteToSkill(await remote.createSkill(payload));
-      // No SKILL.md is written on this path: the host registers embedded skills
-      // (adapter.ts), so a local file would be a second copy of the truth.
+      if (created.enabled) await this.writeSkillFile(created);
       notifySkillsChanged();
       return created;
     }
@@ -277,6 +280,11 @@ export class SkillsManager {
         enabled: boolean;
       }> = { name, description, content, autoinvoke, enabled };
       const updated = remoteToSkill(await remote.updateSkill(id, patch));
+      if (updated.enabled) {
+        await this.writeSkillFile(updated);
+      } else {
+        await this.removeSkillFile(id);
+      }
       notifySkillsChanged();
       return updated;
     }
@@ -307,6 +315,7 @@ export class SkillsManager {
     const remote = getRemoteStore();
     if (remote) {
       await remote.deleteSkill(id);
+      await this.removeSkillFile(id);
       notifySkillsChanged();
       return true;
     }

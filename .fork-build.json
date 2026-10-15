@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote storage for memory, profile and skills; capture diagnostics; UI password split",
-  "commit": "f8bbd50",
-  "builtAt": "2026-10-15T06:53:39.8519863+03:00",
+  "note": "remote storage for memory, profile and skills; skills registered with the host",
+  "commit": "e4523b1",
+  "builtAt": "2026-10-15T07:19:44.1260645+03:00",
   "distFiles": 294
 }

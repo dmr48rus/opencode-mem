@@ -2,7 +2,6 @@ import { isAbsolute, resolve } from "node:path";
 import type { Context } from "@opencode/plugin/promise/plugin";
 import { log } from "../services/logger.js";
 import { onSkillsChanged, skillsManager } from "../services/skills/skills-manager.js";
-import { getTags } from "../services/tags.js";
 import { eventBelongsToLocation, legacyToolResult, toLegacyEvent } from "./legacy-client.js";
 
 interface MemoryContextHooks {
@@ -61,13 +60,14 @@ export async function registerV2Adapter(ctx: Context, legacy: any) {
   async function registerDbSkills(): Promise<void> {
     if (!ctx.skill?.transform) return;
 
-    const projectTag = getTags(ctx.location.directory).project.tag;
+    // No project tag. The skills store is the shared server-side store, and a
+    // skill in it is in it for every project, exactly like remote memory. The
+    // container_tag column is still written and still in the schema; it is just
+    // no longer how visibility is decided. Filtering here would hide the global
+    // rows from any client that has no project tag of its own.
     let skills: Awaited<ReturnType<typeof skillsManager.list>> = [];
     try {
-      skills = await skillsManager.list({
-        enabledOnly: true,
-        containerTag: projectTag,
-      });
+      skills = await skillsManager.list({ enabledOnly: true });
     } catch (error) {
       log("Failed to load skills for OpenCode registration", { error: String(error) });
       return;
@@ -75,41 +75,51 @@ export async function registerV2Adapter(ctx: Context, legacy: any) {
 
     const nextIds = new Set(skills.map((skill) => skill.id));
 
-    await ctx.skill.transform((editor) => {
-      for (const id of registeredSkillIds) {
-        if (!nextIds.has(id) && editor.get(id)) {
-          editor.remove(id);
+    try {
+      await ctx.skill.transform((editor) => {
+        for (const id of registeredSkillIds) {
+          if (!nextIds.has(id) && editor.get(id)) {
+            editor.remove(id);
+          }
         }
-      }
 
-      for (const skill of skills) {
-        const path = skillsManager.skillPath(skill.id);
-        const absolutePath = isAbsolute(path) ? path : resolve(path);
-        const payload = {
-          id: skill.id,
-          name: skill.name,
-          description: skill.description || undefined,
-          autoinvoke: skill.autoinvoke,
-          path: absolutePath,
-          content: skill.content,
-        } as any;
+        for (const skill of skills) {
+          // Skill.Info requires an absolute path even for a skill whose content
+          // travels inline, so the SKILL.md is written next to the store. It is
+          // a derived copy of what the server holds, not a second source: the
+          // row on the server is what create/update/delete act on.
+          const path = skillsManager.skillPath(skill.id);
+          const absolutePath = isAbsolute(path) ? path : resolve(path);
+          const payload = {
+            id: skill.id,
+            name: skill.name,
+            description: skill.description || undefined,
+            autoinvoke: skill.autoinvoke,
+            path: absolutePath,
+            content: skill.content,
+          } as any;
 
-        if (editor.get(skill.id)) {
-          editor.update(skill.id, (entry) => {
-            entry.name = payload.name;
-            entry.description = payload.description;
-            entry.autoinvoke = payload.autoinvoke;
-            entry.path = payload.path;
-            entry.content = payload.content;
-          });
-        } else {
-          editor.add(payload);
+          if (editor.get(skill.id)) {
+            editor.update(skill.id, (entry) => {
+              entry.name = payload.name;
+              entry.description = payload.description;
+              entry.autoinvoke = payload.autoinvoke;
+              entry.path = payload.path;
+              entry.content = payload.content;
+            });
+          } else {
+            editor.add(payload);
+          }
         }
-      }
-    });
+      });
 
-    registeredSkillIds.clear();
-    for (const id of nextIds) registeredSkillIds.add(id);
+      registeredSkillIds.clear();
+      for (const id of nextIds) registeredSkillIds.add(id);
+    } catch (error) {
+      // A registration failure must not take the plugin down: the rest of the
+      // memory system is independent of whether the host accepted a skill.
+      log("Shared skill registration failed", { error: String(error) });
+    }
   }
 
   await ctx.tool.transform((editor) =>

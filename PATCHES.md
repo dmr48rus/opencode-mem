@@ -83,13 +83,25 @@ existed, so the server is unchanged and its local store became the shared one.
 `remoteStorage.enabled` remains the switch back to a purely local install, and
 `container_tag` stops being a filter: the shared store is global.
 
-**Not done, and it is the honest gap:** stored skills are not pushed into the
-OpenCode registry. `v2/adapter.ts` calls `editor.get/add/update/remove`, and
-SDK 1.18.34's `SkillDraft` has only `source()` and `list()` — that code cannot
-run against this host, which is why no skill has ever appeared here. What
-`source()` does on a repeated call, and how a source is withdrawn, are questions
-about the host that were not guessed at. Storage and reading work; the model
-sees these skills when it asks for them.
+**Registration in OpenCode** — `v2/adapter.ts`. Enabled skills are pushed into
+the host's own skill registry at start and after every change, with stale ones
+removed, so a stored skill reaches the model exactly like a file-based one. The
+project tag is no longer part of the filter, for the same global-store reason as
+above.
+
+One thing that reads like a design choice and is not: `SKILL.md` is still
+written on **every** path, remote included. `Skill.Info` requires an absolute
+`path` even for a skill whose content travels inline, and that path has to
+exist. The row on the server stays the only source of truth; the file is a
+derived copy the host contract demands.
+
+A correction worth keeping: an earlier version of this file said the
+registration could not run, because `SkillDraft` in `@opencode-ai/plugin`
+1.18.34 has only `source()` and `list()`. That is the **OpenCode v1** SDK. The
+v2 adapter is typed by `@opencode/plugin` 2.0.24, which is what OpenCode 2.0.28
+in this build actually provides, and it has `SkillEditor` with
+`list/get/add/update/remove`. No skill has ever appeared here because none was
+ever created, not because registration was broken.
 
 ## Repository, not runtime
 

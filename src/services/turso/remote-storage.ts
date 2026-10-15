@@ -67,6 +67,39 @@ export class RemoteStorageError extends Error {
 
 type FetchLike = typeof fetch;
 
+/**
+ * The server's shape for a skill, which is what `GET /api/skills` returns.
+ *
+ * It is NOT the client's SkillRecord and deliberately so: the columns
+ * container_tag and autoinvoke exist in both, but created_at / updated_at come
+ * back as ISO strings here and as epoch numbers in the local row. Converting
+ * once, in skills-manager, keeps that knowledge in one place instead of
+ * spreading "maybe it is a date, maybe it is a number" across the call sites.
+ */
+export interface RemoteSkillRecord {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  autoinvoke: boolean;
+  enabled: boolean;
+  containerTag: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RemoteSkillInput {
+  id: string;
+  name: string;
+  description?: string;
+  content: string;
+  autoinvoke?: boolean;
+  enabled?: boolean;
+  containerTag?: string | null;
+}
+
+export type RemoteSkillUpdate = Partial<Omit<RemoteSkillInput, "id">>;
+
 export interface RemoteStorageClient {
   search(query: string, options?: RemoteSearchOptions): Promise<RemoteMemoryRecord[]>;
   getMemoryById(id: string): Promise<RemoteMemoryRecord | null>;
@@ -88,6 +121,11 @@ export interface RemoteStorageClient {
     promptsAnalyzed?: number;
     changeSummary?: string;
   }): Promise<{ profileId: string; version: number; created: boolean }>;
+  listSkills(options?: { enabledOnly?: boolean }): Promise<RemoteSkillRecord[]>;
+  getSkill(id: string): Promise<RemoteSkillRecord | null>;
+  createSkill(payload: RemoteSkillInput): Promise<RemoteSkillRecord>;
+  updateSkill(id: string, payload: RemoteSkillUpdate): Promise<RemoteSkillRecord>;
+  deleteSkill(id: string): Promise<void>;
 }
 
 const trimBase = (baseUrl: string): string => baseUrl.replace(/\/+$/, "");
@@ -266,6 +304,47 @@ export function createRemoteStorageClient(
         "/api/user-profile",
         { method: "PUT", body: JSON.stringify(payload) }
       );
+    },
+
+    // Skills. The server exposes /api/skills already, so this is a plain
+    // mapping onto routes that were already there -- no server change, and the
+    // server's own local store becomes the shared one.
+
+    async listSkills(options) {
+      const params = new URLSearchParams();
+      if (options?.enabledOnly) params.set("enabledOnly", "true");
+      const query = params.toString();
+      const data = await request<{ items?: RemoteSkillRecord[] }>(
+        query ? `/api/skills?${query}` : "/api/skills"
+      );
+      return Array.isArray(data?.items) ? data.items : [];
+    },
+    async getSkill(id) {
+      try {
+        return await request<RemoteSkillRecord>(`/api/skills/${encodeURIComponent(id)}`);
+      } catch (error) {
+        // "There is no such skill" and "the server could not be asked" must not
+        // arrive as the same value: the first is an answer, the second is a fault.
+        if (error instanceof RemoteStorageError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    async createSkill(payload) {
+      return await request<RemoteSkillRecord>("/api/skills", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    async updateSkill(id, payload) {
+      return await request<RemoteSkillRecord>(`/api/skills/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    async deleteSkill(id) {
+      // No boolean here: this either performed the delete or it did not, and a
+      // false would read as "there was nothing to delete".
+      await request<unknown>(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
     },
   };
 }

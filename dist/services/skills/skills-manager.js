@@ -87,6 +87,16 @@ export class SkillsManager {
     }
     async getDb() {
         await this.initialize();
+        // Connection manager is authoritative: boot migrators may close/replace
+        // skills.db underneath a cached TursoDb handle (encryption/engine rewrite).
+        if (this.db) {
+            const current = await tursoConnectionManager.getConnection(this.dbPath);
+            if (current === this.db) {
+                return this.db;
+            }
+            this.reset();
+            await this.initialize();
+        }
         if (!this.db)
             throw new Error("Skills database not initialized");
         return this.db;

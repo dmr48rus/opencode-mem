@@ -109,3 +109,38 @@ ever created, not because registration was broken.
 vendors must not depend on a rebuild), `remote-mem/` holds the server, and
 `eslint.config.js` / `package.json` keep the pre-commit hook off both, since
 prettier over `dist/` would rewrite the artifact this repository ships.
+
+## Ported upstream fixes (2.31.1 - 2.31.3)
+
+Three fixes from upstream releases, two cherry-picked as-is and one applied by
+hand. They are not ours; they are listed because each one changes behaviour,
+and because all three touch code this fork also changed.
+
+**`fe8cd04` (upstream `552825f`) JSONC trailing commas, string-safe** -
+`services/jsonc.ts`, picked as-is; this fork never touched the file. Upstream's
+stripper was eating commas inside string contents, so a value such as
+`"https://host/x,"` lost its comma. Our own Python reader of that same config
+(`hermes_tools_mcp.py`, outside this repository) had the mirror-image gap: it
+removed comments only, so a trailing comma the plugin tolerates made
+`json.loads` fail there while the plugin carried on.
+
+**`4643f12` (upstream `2dd1255`) re-raise SIGINT/SIGTERM after cleanup** -
+`index.ts`, picked as-is. Registering the handlers suppressed the runtime's
+default termination; without dropping them and re-delivering the signal the
+host never exits. No forced `process.exit` - that crashes the onnxruntime
+finalisers.
+
+**`ab499fd` (upstream `832d8f8`) reopen the skills DB after a boot-time close** -
+`skills/skills-manager.ts` **applied by hand**, while `turso/lifecycle.ts` and the
+test were taken from upstream. `getDb()` trusted its own cached handle: when a
+boot migrator closed or replaced `skills.db` underneath it, skills quietly
+stopped working while the plugin still looked healthy - the same shape as the
+`{"count":0}` registration line seen in the build log.
+`closeTursoAndInvalidateCaches` now resets `skillsManager` along with the other
+caches. The hunk was applied rather than picked because this file carries our
+remote/local branches.
+
+The base is still `2.31.0` and the tag says so. These three make the fork
+behave like `2.31.3` in these places only; the dependency bumps from those
+releases were deliberately not taken, so the version in the tag is not a lie
+about the package versions actually installed.

@@ -4,6 +4,7 @@ import { resetTursoReady } from "./ready.js";
 import { userPromptManager } from "../user-prompt/user-prompt-manager.js";
 import { userProfileManager } from "../user-profile/user-profile-manager.js";
 import { aiSessionManager } from "../ai/session/ai-session-manager.js";
+import { skillsManager } from "../skills/skills-manager.js";
 
 export async function closeTursoAndInvalidateCaches(): Promise<void> {
   await tursoConnectionManager.closeAll();
@@ -12,4 +13,5 @@ export async function closeTursoAndInvalidateCaches(): Promise<void> {
   userPromptManager.reset();
   userProfileManager.reset();
   aiSessionManager.reset();
+  skillsManager.reset();
 }

@@ -132,4 +132,29 @@ describe("SkillsManager", () => {
     stop();
     expect(hits).toBe(3);
   });
+
+  it("reopens after closeTursoAndInvalidateCaches", async () => {
+    const mgr = await makeManager();
+    await mgr.create({ id: "keep-me", name: "Keep", content: "body" });
+    expect(await mgr.list({ enabledOnly: true })).toHaveLength(1);
+
+    const { closeTursoAndInvalidateCaches } = await import("../src/services/turso/lifecycle.js");
+    await closeTursoAndInvalidateCaches();
+
+    const listed = await mgr.list({ enabledOnly: true });
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toBe("keep-me");
+  });
+
+  it("reopens after closeConnection on skills.db without lifecycle reset", async () => {
+    const mgr = await makeManager();
+    await mgr.create({ id: "stale-guard", name: "Stale", content: "body" });
+    expect(await mgr.list({ enabledOnly: true })).toHaveLength(1);
+
+    await tursoConnectionManager.closeConnection(join(tmpDir, "skills.db"));
+
+    const listed = await mgr.list({ enabledOnly: true });
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toBe("stale-guard");
+  });
 });

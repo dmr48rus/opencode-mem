@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
   "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking computed globally over all shards; query text carried into the shard search; MCP over HTTP on POST /mcp",
-  "commit": "e7a2572",
-  "builtAt": "2026-10-19T22:03:53.0051643+03:00",
+  "commit": "e96c059",
+  "builtAt": "2026-10-19T22:48:08.5581458+03:00",
   "distFiles": 297
 }

@@ -16,8 +16,16 @@ export const MCP_TOOL_SPECS = [
         inputSchema: {
             type: "object",
             properties: {
-                query: { type: "string", description: "What to look for, in the words you would use for it." },
-                limit: { type: "integer", minimum: 1, maximum: 25, description: "How many records to return. Default 8." },
+                query: {
+                    type: "string",
+                    description: "What to look for, in the words you would use for it.",
+                },
+                limit: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 25,
+                    description: "How many records to return. Default 8.",
+                },
             },
             required: ["query"],
         },
@@ -28,7 +36,12 @@ export const MCP_TOOL_SPECS = [
         inputSchema: {
             type: "object",
             properties: {
-                limit: { type: "integer", minimum: 1, maximum: 50, description: "How many recent records to return. Default 10." },
+                limit: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 50,
+                    description: "How many recent records to return. Default 10.",
+                },
             },
         },
     },
@@ -38,7 +51,10 @@ export const MCP_TOOL_SPECS = [
         inputSchema: {
             type: "object",
             properties: {
-                userId: { type: "string", description: "Whose profile. Defaults to the profile of this server." },
+                userId: {
+                    type: "string",
+                    description: "Whose profile. Defaults to the profile of this server.",
+                },
             },
         },
     },
@@ -50,7 +66,10 @@ export const MCP_TOOL_SPECS = [
             properties: {
                 content: { type: "string", description: "The fact, in one or two sentences." },
                 tags: { type: "array", items: { type: "string" }, description: "Topic tags." },
-                project: { type: "string", description: "Project path or name. Defaults to the client project." },
+                project: {
+                    type: "string",
+                    description: "Project path or name. Defaults to the client project.",
+                },
             },
             required: ["content"],
         },

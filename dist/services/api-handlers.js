@@ -693,6 +693,10 @@ export async function handleSnapshot(limit = 10) {
         let total = 0;
         for (const shard of shards) {
             const db = await tursoConnectionManager.getConnection(shard.dbPath);
+            // The snapshot filters on a column added by a migration, and the
+            // snapshot path is not the search path: without this the query fails
+            // with "no such column" on a shard that was never searched.
+            await tursoShardManager.ensureShardSchema(db);
             const typeRows = await db.all(`SELECT type, COUNT(*) AS n FROM memories GROUP BY type`);
             for (const row of typeRows) {
                 const key = row.type ? String(row.type) : "unknown";

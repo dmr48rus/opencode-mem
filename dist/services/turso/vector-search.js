@@ -464,6 +464,10 @@ export class TursoVectorSearch {
         globalLexicalCorpus = null;
     }
     async listMemories(db, containerTag, limit, tagFilters = []) {
+        // The list filters on a column added by a migration, and the list path is
+        // not the search path: without this the query fails with "no such column"
+        // on a shard that was never searched.
+        await this.prepareShardDb(db);
         const filters = Array.isArray(tagFilters)
             ? tagFilters.map((t) => String(t).trim().toLowerCase()).filter((t) => t.length > 0)
             : [];

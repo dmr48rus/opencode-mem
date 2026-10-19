@@ -648,7 +648,8 @@ export async function handleSearch(
               shard,
               queryVector,
               filterTag,
-              pageSize * 2
+              pageSize * 2,
+              query
             );
             for (const result of results) {
               const key = String(result.id ?? `${result.memory}:${result.similarity}`);
@@ -689,7 +690,8 @@ export async function handleSearch(
               shard,
               queryVector,
               containerTag,
-              pageSize
+              pageSize,
+              query
             );
             memoryResults.push(...results);
           } catch (error) {

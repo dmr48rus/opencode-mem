@@ -3,9 +3,12 @@ import { tursoShardManager } from "./shard-manager.js";
 import { log } from "../logger.js";
 import type { MemoryRecord, SearchResult, ShardInfo } from "./types.js";
 import {
+  bm25Scores,
   distanceToSimilarity,
   escapeLikePattern,
   parseSessionIdFromMetadata,
+  rankByScore,
+  rrfScore,
   tokenizeQueryText,
   vectorToJson,
 } from "./vector-utils.js";
@@ -18,6 +21,26 @@ function parseMetadata(value: unknown): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Rows read per query for the BM25 channel. */
+const LEXICAL_SCAN_LIMIT = 50000;
+
+/**
+ * Rank fusion is opt-in: the legacy weighted sum stays the default until the
+ * hybrid is measured on the live store.
+ *
+ *   OPENCODE_MEM_RRF=1    enable rank fusion
+ *   OPENCODE_MEM_RRF_K   the flattening constant (default 10)
+ */
+function isRrfMode(): boolean {
+  const value = (process.env.OPENCODE_MEM_RRF ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "on" || value === "yes";
+}
+
+function rrfK(): number {
+  const raw = Number(process.env.OPENCODE_MEM_RRF_K);
+  return Number.isFinite(raw) && raw > 0 ? raw : 10;
 }
 
 function resolveSessionId(record: MemoryRecord): string | null {
@@ -110,14 +133,36 @@ export class TursoVectorSearch {
     // content+tags+keyword candidates can merge before hybrid re-rank.
     const k = Math.max(limit * 2, 32);
 
+    const queryWords = tokenizeQueryText(queryText);
+    const hasKeyword = queryWords.length > 0;
+    // Rank fusion is opt-in: the legacy weighted sum stays the default until
+    // the hybrid is measured on the live store.
+    const rrfMode = hasKeyword && isRrfMode();
+
     const contentResults = await this.exactScanKind(db, queryJson, k, containerTag, "vector");
     const tagsResults = await this.exactScanKind(db, queryJson, k, containerTag, "tags_vector");
-    const keywordScores = await this.keywordScores(db, queryText, containerTag, k);
+    // In rank-fusion mode the LIKE keyword channel is replaced by BM25, so the
+    // per-token scans (up to 16 of them) are not paid for twice.
+    const keywordScores = rrfMode
+      ? new Map<string, number>()
+      : await this.keywordScores(db, queryText, containerTag, k);
+
+    // BM25 over the shard: the driver has no FTS5, so the lexical channel is
+    // counted in process.
+    const lexicalScores = rrfMode
+      ? bm25Scores(await this.lexicalDocs(db, containerTag), queryWords)
+      : new Map<string, number>();
+    const lexicalRanks = rrfMode
+      ? rankByScore([...lexicalScores.entries()].map(([id, score]) => ({ id, score })))
+      : new Map<string, number>();
 
     const candidateIds = new Set<string>();
     for (const result of contentResults) candidateIds.add(result.id);
     for (const result of tagsResults) candidateIds.add(result.id);
     for (const id of keywordScores.keys()) candidateIds.add(id);
+    for (const [id, rank] of lexicalRanks) {
+      if (rank <= k) candidateIds.add(id);
+    }
 
     const ids = Array.from(candidateIds);
     if (ids.length === 0) return [];
@@ -152,10 +197,7 @@ export class TursoVectorSearch {
         : [queryJson, queryJson, ...ids, containerTag]
     );
 
-    const queryWords = tokenizeQueryText(queryText);
-    const hasKeyword = queryWords.length > 0;
-
-    const hydratedResults = rows.map((row: Record<string, unknown>) => {
+    const components = rows.map((row: Record<string, unknown>) => {
       const contentSim = distanceToSimilarity(Number(row.content_dist));
       const tagsSim =
         row.tags_dist == null || row.tags_dist === undefined
@@ -178,33 +220,70 @@ export class TursoVectorSearch {
 
       const keywordSim = keywordScores.get(String(row.id)) ?? 0;
       const finalTagsSim = Math.max(tagsSim, exactMatchBoost);
-      // With query text: blend vector + keyword. Without: keep classic 0.6/0.4.
-      //
-      // A signal the memory does NOT have is absent, not zero. Charging the
-      // full tags weight against a row with no tags vector capped every
-      // untagged memory at 0.5 - below the default 0.6 threshold - so it could
-      // be stored and then never read back, not even by a query repeating its
-      // own text. Weights are renormalized over the signals a row carries.
-      let similarity: number;
-      if (hasKeyword) {
-        const wContent = 0.5;
-        const wTags = finalTagsSim > 0 ? 0.3 : 0;
-        const wKeyword = keywordSim > 0 ? 0.2 : 0;
-        const total = wContent + wTags + wKeyword;
-        similarity = (contentSim * wContent + finalTagsSim * wTags + keywordSim * wKeyword) / total;
-      } else {
-        const wContent = 0.6;
-        const wTags = finalTagsSim > 0 ? 0.4 : 0;
-        const total = wContent + wTags;
-        similarity = (contentSim * wContent + finalTagsSim * wTags) / total;
-      }
+      return { row, contentSim, finalTagsSim, keywordSim, memoryTagsStr };
+    });
 
+    // With query text: blend vector + keyword. Without: keep classic 0.6/0.4.
+    //
+    // A signal the memory does NOT have is absent, not zero. Charging the
+    // full tags weight against a row with no tags vector capped every
+    // untagged memory at 0.5 - below the default 0.6 threshold - so it could
+    // be stored and then never read back, not even by a query repeating its
+    // own text. Weights are renormalized over the signals a row carries.
+    //
+    // Rank-fusion mode replaces that sum: the channels vote with ranks, so one
+    // noisy signal cannot decide the winner. The sum cannot do that - a row
+    // with no lexical and no tag signal keeps the whole weight on a single
+    // vector, and long boilerplate records win exactly those comparisons.
+    const fused = new Map<string, number>();
+    if (rrfMode) {
+      const contentRanks = rankByScore(
+        components.map((component) => ({
+          id: String(component.row.id),
+          score: component.contentSim,
+        }))
+      );
+      const tagRanks = rankByScore(
+        components.map((component) => ({
+          id: String(component.row.id),
+          score: component.finalTagsSim,
+        }))
+      );
+      const fusedScores = rrfScore([contentRanks, tagRanks, lexicalRanks], rrfK());
+      // Normalize so that first place in all three channels is 1.0. The scale
+      // is a constant, not a per-shard maximum: a per-shard maximum would make
+      // every shard contribute its own winner to the global merge.
+      const scale = (rrfK() + 1) / 3;
+      for (const [id, score] of fusedScores) fused.set(id, score * scale);
+    } else {
+      for (const component of components) {
+        const { contentSim, finalTagsSim, keywordSim } = component;
+        let similarity: number;
+        if (hasKeyword) {
+          const wContent = 0.5;
+          const wTags = finalTagsSim > 0 ? 0.3 : 0;
+          const wKeyword = keywordSim > 0 ? 0.2 : 0;
+          const total = wContent + wTags + wKeyword;
+          similarity =
+            (contentSim * wContent + finalTagsSim * wTags + keywordSim * wKeyword) / total;
+        } else {
+          const wContent = 0.6;
+          const wTags = finalTagsSim > 0 ? 0.4 : 0;
+          const total = wContent + wTags;
+          similarity = (contentSim * wContent + finalTagsSim * wTags) / total;
+        }
+        fused.set(String(component.row.id), similarity);
+      }
+    }
+
+    const hydratedResults = components.map((component) => {
+      const row = component.row;
       return {
         id: String(row.id),
         memory: String(row.content),
-        similarity,
+        similarity: fused.get(String(row.id)) ?? 0,
         createdAt: Number(row.created_at),
-        tags: memoryTagsStr ? memoryTagsStr.split(",") : [],
+        tags: component.memoryTagsStr ? component.memoryTagsStr.split(",") : [],
         metadata: parseMetadata(row.metadata),
         containerTag: String(row.container_tag),
         displayName: row.display_name ? String(row.display_name) : undefined,
@@ -219,6 +298,29 @@ export class TursoVectorSearch {
 
     hydratedResults.sort((a, b) => b.similarity - a.similarity);
     return hydratedResults.slice(0, Math.max(0, limit));
+  }
+
+  /**
+   * Documents for the lexical channel: id + content + tags.
+   *
+   * The driver has no FTS5, so BM25 is counted in process over this list.
+   * shortcut: the whole shard is read per query, capped above; a real index is
+   * the upgrade when a shard actually reaches the cap.
+   */
+  private async lexicalDocs(
+    db: TursoDb,
+    containerTag: string
+  ): Promise<Array<{ id: string; text: string }>> {
+    const rows = await db.all(
+      containerTag === ""
+        ? `SELECT id, content, tags FROM memories LIMIT ?`
+        : `SELECT id, content, tags FROM memories WHERE container_tag = ? LIMIT ?`,
+      containerTag === "" ? [LEXICAL_SCAN_LIMIT] : [containerTag, LEXICAL_SCAN_LIMIT]
+    );
+    return rows.map((row) => ({
+      id: String(row.id),
+      text: `${String(row.content ?? "")} ${String(row.tags ?? "")}`,
+    }));
   }
 
   /**
@@ -342,7 +444,9 @@ export class TursoVectorSearch {
     allResults.sort((a, b) => b.similarity - a.similarity);
     return {
       results: allResults
-        .filter((result) => result.similarity >= similarityThreshold)
+        .filter((result) =>
+          isRrfMode() ? result.similarity > 0 : result.similarity >= similarityThreshold
+        )
         .slice(0, limit),
       warnings,
     };

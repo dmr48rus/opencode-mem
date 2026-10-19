@@ -65,6 +65,87 @@ export function distanceToSimilarity(distance: number): number {
   return Math.max(0, Math.min(1, similarity));
 }
 
+/**
+ * BM25 over a shard's memories.
+ *
+ * `@tursodatabase/database` does not ship FTS5, so the lexical channel is
+ * counted in process: one scan of the shard per query. Token rules match
+ * `tokenizeQueryText` (the query side caps at 16 tokens, a document does not).
+ *
+ * shortcut: one full scan per query per shard. Acceptable up to ~50k rows in a
+ * shard; beyond that the lexical channel has to move to a real index (upgrade
+ * when a shard actually reaches that size).
+ */
+export function bm25Scores(
+  docs: Array<{ id: string; text: string }>,
+  queryTokens: string[]
+): Map<string, number> {
+  const scores = new Map<string, number>();
+  if (queryTokens.length === 0 || docs.length === 0) return scores;
+  const k1 = 1.2;
+  const b = 0.75;
+  const documentFrequency = new Map<string, number>();
+  const tokenized: Array<{ id: string; counts: Map<string, number>; length: number }> = [];
+  let totalLength = 0;
+  for (const doc of docs) {
+    const tokens = doc.text
+      .toLowerCase()
+      .split(/[\s,._/-]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 1);
+    const counts = new Map<string, number>();
+    for (const token of tokens) counts.set(token, (counts.get(token) ?? 0) + 1);
+    for (const token of counts.keys()) {
+      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+    }
+    totalLength += tokens.length;
+    tokenized.push({ id: doc.id, counts, length: tokens.length });
+  }
+  const total = tokenized.length;
+  const averageLength = totalLength / total || 1;
+  for (const doc of tokenized) {
+    let score = 0;
+    for (const token of queryTokens) {
+      const frequency = doc.counts.get(token);
+      if (!frequency) continue;
+      const df = documentFrequency.get(token) ?? 0;
+      const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
+      const denominator = frequency + k1 * (1 - b + (b * doc.length) / averageLength);
+      score += idf * ((frequency * (k1 + 1)) / denominator);
+    }
+    if (score > 0) scores.set(doc.id, score);
+  }
+  return scores;
+}
+
+/** Rank ids by score, best first. Ranks are 1-based; only positive scores take part. */
+export function rankByScore(entries: Array<{ id: string; score: number }>): Map<string, number> {
+  const ranks = new Map<string, number>();
+  entries
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .forEach((entry, index) => ranks.set(entry.id, index + 1));
+  return ranks;
+}
+
+/**
+ * Reciprocal rank fusion: the channels vote with ranks, not with scores.
+ *
+ * A weighted sum of scores lets one noisy signal decide the winner; a rank
+ * cannot. `k` flattens the head - with k=10 a first place is worth 1/11 and a
+ * tenth place 1/20, so a second channel can still lift a record that one
+ * channel ranked low.
+ */
+export function rrfScore(rankChannels: Array<Map<string, number>>, k: number): Map<string, number> {
+  const scores = new Map<string, number>();
+  for (const ranks of rankChannels) {
+    for (const [id, rank] of ranks) {
+      scores.set(id, (scores.get(id) ?? 0) + 1 / (k + rank));
+    }
+  }
+  return scores;
+}
+
 /** Canonical text used for tag-vector embeddings (must stay consistent across write paths). */
 export function formatTagsForEmbedding(tags: string[]): string {
   return `Topics: ${tags.join(", ")}`;

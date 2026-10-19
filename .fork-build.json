@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking and the fusion itself computed globally over all shards, tokenized corpus cached; query text carried into the shard search; MCP over HTTP on POST /mcp",
-  "commit": "13e05b7",
-  "builtAt": "2026-10-19T23:59:19.1077473+03:00",
-  "distFiles": 297
+  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking and the fusion itself computed globally over all shards, tokenized corpus cached; query text carried into the shard search; MCP over HTTP on POST /mcp; tier-aware aging sweep (POST /api/sweep) with a reversible tombstone",
+  "commit": "c3d270c",
+  "builtAt": "2026-10-20T00:06:07.8407764+03:00",
+  "distFiles": 300
 }

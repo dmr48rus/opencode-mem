@@ -133,6 +133,20 @@ export declare function handleRememberByProject(data: {
     project?: string;
     type?: string;
 }): Promise<ApiResponse<any>>;
+/**
+ * Age the memories that may be forgotten.
+ *
+ * The sweep is a dry run unless the caller asks otherwise: forgetting is not
+ * something a request should do by accident. The records are marked, not
+ * deleted - the content stays, the marker can be cleared, and the search stops
+ * returning them.
+ */
+export declare function handleRunSweep(data?: {
+    dryRun?: boolean;
+    episodicDays?: number;
+    proceduralDays?: number;
+    limit?: number;
+}): Promise<ApiResponse<any>>;
 export declare function handleStats(): Promise<ApiResponse<{
     total: number;
     byScope: {

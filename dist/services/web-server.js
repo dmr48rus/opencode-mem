@@ -10,7 +10,7 @@ import { getOrCreateAuthToken, isAuthorizedApiRequest } from "./auth-token.js";
 import { WebAuth } from "./web-auth.js";
 import { NODE_HTTP_IDLE_TIMEOUT_MS } from "./request-timeouts.js";
 import { checkMcpHost, handleMcpJsonRpc } from "./mcp-endpoint.js";
-import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
+import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
 const isBun = typeof globalThis.Bun !== "undefined";
 const MIN_FAILED_TAKEOVERS = 3;
 export function attachNodeDisconnectHandlers(req, res, onDisconnect) {
@@ -526,6 +526,18 @@ export class WebServer {
             }
             if (path === "/api/cleanup" && method === "POST") {
                 const result = await handleRunCleanup();
+                return this.jsonResponse(result);
+            }
+            // The sweep is a dry run unless the caller says otherwise: forgetting is
+            // not something a request should do by accident.
+            if (path === "/api/sweep" && method === "POST") {
+                const body = (await req.json().catch(() => ({})));
+                const result = await handleRunSweep({
+                    dryRun: body.dryRun !== false,
+                    episodicDays: body.episodicDays,
+                    proceduralDays: body.proceduralDays,
+                    limit: body.limit,
+                });
                 return this.jsonResponse(result);
             }
             if (path === "/api/deduplicate" && method === "POST") {

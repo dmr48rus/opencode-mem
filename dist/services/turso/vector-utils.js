@@ -62,24 +62,17 @@ export function distanceToSimilarity(distance) {
     return Math.max(0, Math.min(1, similarity));
 }
 /**
- * BM25 over a shard's memories.
+ * Tokenize the documents and collect the corpus statistics BM25 needs.
  *
- * `@tursodatabase/database` does not ship FTS5, so the lexical channel is
- * counted in process: one scan of the shard per query. Token rules match
- * `tokenizeQueryText` (the query side caps at 16 tokens, a document does not).
- *
- * shortcut: one full scan per query per shard. Acceptable up to ~50k rows in a
- * shard; beyond that the lexical channel has to move to a real index (upgrade
- * when a shard actually reaches that size).
+ * The lexical channel runs on every query, so the tokenization and the
+ * document frequencies belong to the corpus, not to the query. Re-tokenizing
+ * 1500 documents per query is what made the hybrid search three times slower
+ * (measured on the live server, 19.10.2026: p50 883 ms against 302 ms in
+ * legacy mode).
  */
-export function bm25Scores(docs, queryTokens) {
-    const scores = new Map();
-    if (queryTokens.length === 0 || docs.length === 0)
-        return scores;
-    const k1 = 1.2;
-    const b = 0.75;
+export function buildLexicalCorpus(docs) {
     const documentFrequency = new Map();
-    const tokenized = [];
+    const documents = [];
     let totalLength = 0;
     for (const doc of docs) {
         const tokens = doc.text
@@ -94,19 +87,32 @@ export function bm25Scores(docs, queryTokens) {
             documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
         }
         totalLength += tokens.length;
-        tokenized.push({ id: doc.id, counts, length: tokens.length });
+        documents.push({
+            id: doc.id,
+            containerTag: doc.containerTag ?? "",
+            counts,
+            length: tokens.length,
+        });
     }
-    const total = tokenized.length;
-    const averageLength = totalLength / total || 1;
-    for (const doc of tokenized) {
+    const averageLength = documents.length ? totalLength / documents.length : 1;
+    return { documents, documentFrequency, averageLength };
+}
+export function bm25Scores(corpus, queryTokens) {
+    const scores = new Map();
+    if (queryTokens.length === 0 || corpus.documents.length === 0)
+        return scores;
+    const k1 = 1.2;
+    const b = 0.75;
+    const total = corpus.documents.length;
+    for (const doc of corpus.documents) {
         let score = 0;
         for (const token of queryTokens) {
             const frequency = doc.counts.get(token);
             if (!frequency)
                 continue;
-            const df = documentFrequency.get(token) ?? 0;
+            const df = corpus.documentFrequency.get(token) ?? 0;
             const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
-            const denominator = frequency + k1 * (1 - b + (b * doc.length) / averageLength);
+            const denominator = frequency + k1 * (1 - b + (b * doc.length) / corpus.averageLength);
             score += idf * ((frequency * (k1 + 1)) / denominator);
         }
         if (score > 0)

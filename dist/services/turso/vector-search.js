@@ -1,7 +1,7 @@
 import { tursoConnectionManager } from "./connection-manager.js";
 import { tursoShardManager } from "./shard-manager.js";
 import { log } from "../logger.js";
-import { bm25Scores, distanceToSimilarity, escapeLikePattern, parseSessionIdFromMetadata, rankByScore, rrfScore, tokenizeQueryText, vectorToJson, } from "./vector-utils.js";
+import { bm25Scores, buildLexicalCorpus, distanceToSimilarity, escapeLikePattern, parseSessionIdFromMetadata, rankByScore, rrfScore, tokenizeQueryText, vectorToJson, } from "./vector-utils.js";
 function parseMetadata(value) {
     if (!value || typeof value !== "string")
         return undefined;
@@ -14,6 +14,16 @@ function parseMetadata(value) {
 }
 /** Rows read per query for the BM25 channel. */
 const LEXICAL_SCAN_LIMIT = 50000;
+/**
+ * The lexical index is a cache, not a scan.
+ *
+ * Reading every shard on every query cost two dozen round trips and made the
+ * search three times slower: measured on the live server, 19.10.2026, p50 883 ms
+ * against 302 ms in legacy mode. The corpus changes rarely, so the tokenized
+ * corpus is cached and dropped when a record is written.
+ */
+const LEXICAL_CACHE_TTL_MS = 60_000;
+let globalLexicalCorpus = null;
 /**
  * Rank fusion is opt-in: the legacy weighted sum stays the default until the
  * hybrid is measured on the live store.
@@ -117,9 +127,11 @@ export class TursoVectorSearch {
         const contentVector = vectorToJson(record.vector);
         if (record.tagsVector) {
             await db.execute(INSERT_WITH_TAGS, insertArgs(record, contentVector, vectorToJson(record.tagsVector)));
+            globalLexicalCorpus = null;
             return;
         }
         await db.execute(INSERT_WITHOUT_TAGS, insertArgs(record, contentVector, null));
+        globalLexicalCorpus = null;
     }
     async searchInShard(shard, queryVector, containerTag, limit, queryText, globalLexicalRanks) {
         const db = await tursoConnectionManager.getConnection(shard.dbPath);
@@ -144,10 +156,9 @@ export class TursoVectorSearch {
         // A caller that searches several shards at once passes the GLOBAL ranks
         // instead: per-shard ranks are not comparable between shards, so every
         // shard would contribute its own local champion to the merged list.
-        const localLexicalRanks = rrfMode
-            ? rankByScore([...bm25Scores(await this.lexicalDocs(db, containerTag), queryWords).entries()].map(([id, score]) => ({ id, score })))
-            : new Map();
-        const lexicalRanks = globalLexicalRanks ?? localLexicalRanks;
+        // Without those ranks (the local store path) there is no lexical channel,
+        // exactly as before.
+        const lexicalRanks = globalLexicalRanks ?? new Map();
         const candidateIds = new Set();
         for (const result of contentResults)
             candidateIds.add(result.id);
@@ -295,24 +306,43 @@ export class TursoVectorSearch {
      * per-shard BM25 gives hit@10 8/28 on paraphrased questions, global BM25
      * 19/28.
      */
-    async globalLexicalRanks(shards, queryText, containerTag = "") {
+    async globalLexicalRanks(shards, queryText) {
         // Legacy mode keeps the old path and pays nothing for the global scan.
         if (!isRrfMode())
             return new Map();
         const queryTokens = tokenizeQueryText(queryText);
         if (queryTokens.length === 0)
             return new Map();
+        const corpus = await this.lexicalCorpus(shards);
+        const scores = bm25Scores(corpus, queryTokens);
+        return rankByScore([...scores.entries()].map(([id, score]) => ({ id, score })));
+    }
+    /**
+     * The tokenized corpus for the lexical channel.
+     *
+     * The driver has no FTS5, so BM25 is counted in process over this corpus.
+     * The corpus is cached: reading and tokenizing every shard on every query is
+     * what made the hybrid search three times slower. The cache is dropped on a
+     * write, so a record that was just written is findable at once.
+     * shortcut: the whole store is read per cache miss, capped above; a real
+     * index is the upgrade when the store actually reaches the cap.
+     */
+    async lexicalCorpus(shards) {
+        if (globalLexicalCorpus && Date.now() - globalLexicalCorpus.builtAt < LEXICAL_CACHE_TTL_MS) {
+            return globalLexicalCorpus.corpus;
+        }
         const docs = [];
         for (const shard of shards) {
             try {
                 const db = await tursoConnectionManager.getConnection(shard.dbPath);
-                const rows = await db.all(containerTag === ""
-                    ? `SELECT id, content, tags FROM memories LIMIT ?`
-                    : `SELECT id, content, tags FROM memories WHERE container_tag = ? LIMIT ?`, containerTag === "" ? [LEXICAL_SCAN_LIMIT] : [containerTag, LEXICAL_SCAN_LIMIT]);
+                const rows = await db.all(`SELECT id, content, tags, container_tag FROM memories LIMIT ?`, [
+                    LEXICAL_SCAN_LIMIT,
+                ]);
                 for (const row of rows) {
                     docs.push({
                         id: String(row.id),
                         text: `${String(row.content ?? "")} ${String(row.tags ?? "")}`,
+                        containerTag: String(row.container_tag ?? ""),
                     });
                 }
             }
@@ -320,24 +350,9 @@ export class TursoVectorSearch {
                 log("Lexical scan failed on a shard", { shardId: shard.id, error: String(error) });
             }
         }
-        const scores = bm25Scores(docs, queryTokens);
-        return rankByScore([...scores.entries()].map(([id, score]) => ({ id, score })));
-    }
-    /**
-     * Documents for the lexical channel: id + content + tags.
-     *
-     * The driver has no FTS5, so BM25 is counted in process over this list.
-     * shortcut: the whole shard is read per query, capped above; a real index is
-     * the upgrade when a shard actually reaches the cap.
-     */
-    async lexicalDocs(db, containerTag) {
-        const rows = await db.all(containerTag === ""
-            ? `SELECT id, content, tags FROM memories LIMIT ?`
-            : `SELECT id, content, tags FROM memories WHERE container_tag = ? LIMIT ?`, containerTag === "" ? [LEXICAL_SCAN_LIMIT] : [containerTag, LEXICAL_SCAN_LIMIT]);
-        return rows.map((row) => ({
-            id: String(row.id),
-            text: `${String(row.content ?? "")} ${String(row.tags ?? "")}`,
-        }));
+        const corpus = buildLexicalCorpus(docs);
+        globalLexicalCorpus = { corpus, builtAt: Date.now() };
+        return corpus;
     }
     /**
      * Keyword recall for hybrid ranking.
@@ -396,9 +411,7 @@ export class TursoVectorSearch {
         // One lexical ranking for all shards: ranks from different shards are not
         // comparable, so a per-shard lexical channel would fill the merged list
         // with one local champion per project.
-        const globalLexical = isRrfMode() && queryText
-            ? await this.globalLexicalRanks(shards, queryText, containerTag)
-            : undefined;
+        const globalLexical = isRrfMode() && queryText ? await this.globalLexicalRanks(shards, queryText) : undefined;
         const shardPromises = shards.map(async (shard) => {
             try {
                 return await this.searchInShard(shard, queryVector, containerTag, limit, queryText, globalLexical);
@@ -438,6 +451,7 @@ export class TursoVectorSearch {
     }
     async deleteVector(db, memoryId) {
         await db.run(`DELETE FROM memories WHERE id = ?`, [memoryId]);
+        globalLexicalCorpus = null;
     }
     async updateVector(db, memoryId, vector, tagsVector) {
         const contentVector = vectorToJson(vector);
@@ -447,6 +461,7 @@ export class TursoVectorSearch {
         else {
             await db.execute(`UPDATE memories SET vector = vector32(?), tags_vector = NULL WHERE id = ?`, [contentVector, memoryId]);
         }
+        globalLexicalCorpus = null;
     }
     async listMemories(db, containerTag, limit, tagFilters = []) {
         const filters = Array.isArray(tagFilters)

@@ -35,15 +35,18 @@ export declare class TursoVectorSearch {
      * per-shard BM25 gives hit@10 8/28 on paraphrased questions, global BM25
      * 19/28.
      */
-    globalLexicalRanks(shards: ShardInfo[], queryText: string | undefined, containerTag?: string): Promise<Map<string, number>>;
+    globalLexicalRanks(shards: ShardInfo[], queryText: string | undefined): Promise<Map<string, number>>;
     /**
-     * Documents for the lexical channel: id + content + tags.
+     * The tokenized corpus for the lexical channel.
      *
-     * The driver has no FTS5, so BM25 is counted in process over this list.
-     * shortcut: the whole shard is read per query, capped above; a real index is
-     * the upgrade when a shard actually reaches the cap.
+     * The driver has no FTS5, so BM25 is counted in process over this corpus.
+     * The corpus is cached: reading and tokenizing every shard on every query is
+     * what made the hybrid search three times slower. The cache is dropped on a
+     * write, so a record that was just written is findable at once.
+     * shortcut: the whole store is read per cache miss, capped above; a real
+     * index is the upgrade when the store actually reaches the cap.
      */
-    private lexicalDocs;
+    private lexicalCorpus;
     /**
      * Keyword recall for hybrid ranking.
      * `@tursodatabase/database` does not ship FTS5, so we use tokenized LIKE

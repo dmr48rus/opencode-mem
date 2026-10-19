@@ -14,10 +14,32 @@ export declare function distanceToSimilarity(distance: number): number;
  * shard; beyond that the lexical channel has to move to a real index (upgrade
  * when a shard actually reaches that size).
  */
-export declare function bm25Scores(docs: Array<{
+export type TokenizedDocument = {
+    id: string;
+    containerTag: string;
+    counts: Map<string, number>;
+    length: number;
+};
+export type LexicalCorpus = {
+    documents: TokenizedDocument[];
+    documentFrequency: Map<string, number>;
+    averageLength: number;
+};
+/**
+ * Tokenize the documents and collect the corpus statistics BM25 needs.
+ *
+ * The lexical channel runs on every query, so the tokenization and the
+ * document frequencies belong to the corpus, not to the query. Re-tokenizing
+ * 1500 documents per query is what made the hybrid search three times slower
+ * (measured on the live server, 19.10.2026: p50 883 ms against 302 ms in
+ * legacy mode).
+ */
+export declare function buildLexicalCorpus(docs: Array<{
     id: string;
     text: string;
-}>, queryTokens: string[]): Map<string, number>;
+    containerTag?: string;
+}>): LexicalCorpus;
+export declare function bm25Scores(corpus: LexicalCorpus, queryTokens: string[]): Map<string, number>;
 /** Rank ids by score, best first. Ranks are 1-based; only positive scores take part. */
 export declare function rankByScore(entries: Array<{
     id: string;

@@ -136,6 +136,10 @@ export async function runMemorySweep(options: SweepOptions = {}): Promise<SweepR
 
   for (const shard of shards) {
     const db = await tursoConnectionManager.getConnection(shard.dbPath);
+    // The sweep reads a column added by a migration, so the schema has to be
+    // current before the query - a shard that was never searched would not
+    // have it yet.
+    await tursoShardManager.ensureShardSchema(db);
     const rows = await db.all(
       `SELECT id, type, created_at FROM memories
        WHERE is_pinned = 0 AND aged_at IS NULL`

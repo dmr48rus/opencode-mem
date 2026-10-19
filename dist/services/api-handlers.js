@@ -494,7 +494,7 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
                 const shards = await tursoShardManager.getAllShards(scope, hash);
                 for (const shard of shards) {
                     try {
-                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, filterTag, pageSize * 2);
+                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, filterTag, pageSize * 2, query);
                         for (const result of results) {
                             const key = String(result.id ?? `${result.memory}:${result.similarity}`);
                             if (seenMemoryKeys.has(key))
@@ -535,7 +535,7 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
                 const shards = await tursoShardManager.getAllShards(scope, hash);
                 for (const shard of shards) {
                     try {
-                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, containerTag, pageSize);
+                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, containerTag, pageSize, query);
                         memoryResults.push(...results);
                     }
                     catch (error) {

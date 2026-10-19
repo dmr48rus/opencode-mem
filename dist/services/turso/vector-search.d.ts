@@ -6,6 +6,14 @@ export declare class TursoVectorSearch {
     insertVector(db: TursoDb, record: MemoryRecord): Promise<void>;
     searchInShard(shard: ShardInfo, queryVector: Float32Array, containerTag: string, limit: number, queryText?: string): Promise<SearchResult[]>;
     /**
+     * Documents for the lexical channel: id + content + tags.
+     *
+     * The driver has no FTS5, so BM25 is counted in process over this list.
+     * shortcut: the whole shard is read per query, capped above; a real index is
+     * the upgrade when a shard actually reaches the cap.
+     */
+    private lexicalDocs;
+    /**
      * Keyword recall for hybrid ranking.
      * `@tursodatabase/database` does not ship FTS5, so we use tokenized LIKE
      * over content/tags (bounded tokens, ESCAPE-safe).

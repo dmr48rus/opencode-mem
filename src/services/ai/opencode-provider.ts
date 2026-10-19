@@ -967,6 +967,72 @@ export function extractJsonPayload(raw: unknown): unknown {
  * the original error. Throws when the server answered but the result did not
  * satisfy the schema.
  */
+/**
+ * The text of the assistant messages in a session transcript.
+ */
+function extractSessionText(messages: any[]): string | undefined {
+  const parts: unknown[] = [];
+  for (const message of messages) {
+    if (message?.info?.role !== "assistant") continue;
+    if (Array.isArray(message?.parts)) parts.push(...message.parts);
+  }
+  const text = extractAssistantText(parts);
+  return text || undefined;
+}
+
+/**
+ * A session-scoped MESSAGE, not a session-scoped generate.
+ *
+ * The free tier accepts the first and refuses the second ("OpenCode's free tier
+ * can only be used from within OpenCode"). Measured 20.10.2026: the capture
+ * summary went through the /generate route, every transport was refused, and
+ * 10.9% of the prompts (87% that day) were lost - the router's working path is
+ * this one, so the capture now uses it too.
+ */
+async function tryGenerateViaSessionPrompt(
+  config: { base: string; password: string },
+  sessionID: string,
+  prompt: string,
+  waitMs = 120000
+): Promise<string | undefined> {
+  const listPath = `/api/session/${sessionID}/message?order=asc&limit=200`;
+  const readMessages = async (): Promise<any[]> => {
+    const data = await localServerFetch(config, "GET", listPath);
+    const items = (data as { data?: unknown[] })?.data ?? (data as unknown[]);
+    return Array.isArray(items) ? (items as any[]) : [];
+  };
+  const idOf = (message: any) => String(message?.info?.id ?? message?.id ?? "");
+
+  const before = await readMessages();
+  const markerID = before.length ? idOf(before[before.length - 1]) : "";
+  const inbox = await localServerFetch(config, "POST", `/api/session/${sessionID}/prompt`, {
+    text: prompt,
+  });
+  const inboxID = String(
+    (inbox as { id?: string })?.id ?? (inbox as { data?: { id?: string } })?.data?.id ?? ""
+  );
+
+  const deadline = Date.now() + waitMs;
+  let messages = await readMessages();
+  for (;;) {
+    const tail = messages.filter((message) => {
+      const id = idOf(message);
+      return id !== markerID && id !== inboxID;
+    });
+    const idle = tail.find((message) => message?.type === "idle" || message?.info?.type === "idle");
+    if (idle) {
+      const outcome = idle.outcome ?? idle.info?.outcome;
+      if (outcome && outcome !== "succeeded") {
+        throw new Error(`opencode-mem: session ${sessionID} finished with outcome=${outcome}`);
+      }
+      return extractSessionText(tail);
+    }
+    if (Date.now() >= deadline) return undefined;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    messages = await readMessages();
+  }
+}
+
 async function tryGenerateViaRealSession<T>(
   args: SdkStructuredOutputArgs<T>
 ): Promise<T | undefined> {
@@ -1013,19 +1079,35 @@ async function tryGenerateViaRealSession<T>(
     const attempts = Math.max(1, Math.min(4, (args.retryCount ?? 1) + 1));
     let lastText: unknown;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      const generated = await localServerFetch(
-        config,
-        "POST",
-        `/api/session/${sessionID}/generate`,
-        { prompt }
-      );
-      const text =
-        (generated as { data?: { text?: unknown } })?.data?.text ??
-        (generated as { text?: unknown })?.text;
-      lastText = text;
-      const payload = extractJsonPayload(text);
-      if (payload !== undefined) {
-        return schema.parse(payload);
+      try {
+        const generated = await localServerFetch(
+          config,
+          "POST",
+          `/api/session/${sessionID}/generate`,
+          { prompt }
+        );
+        const text =
+          (generated as { data?: { text?: unknown } })?.data?.text ??
+          (generated as { text?: unknown })?.text;
+        lastText = text;
+        const payload = extractJsonPayload(text);
+        if (payload !== undefined) {
+          return schema.parse(payload);
+        }
+      } catch (generateError) {
+        // The free tier refuses this route ("can only be used from within
+        // OpenCode"). A session-scoped MESSAGE is accepted instead, and that is
+        // the path the router uses for every chat request - so the capture
+        // uses it too, instead of losing the prompt.
+        log("real-session generate refused; trying the session prompt route", {
+          error: generateError instanceof Error ? generateError.message : String(generateError),
+        });
+        const prompted = await tryGenerateViaSessionPrompt(config, sessionID, prompt);
+        lastText = prompted;
+        const payload = extractJsonPayload(prompted);
+        if (payload !== undefined) {
+          return schema.parse(payload);
+        }
       }
       if (attempt < attempts) {
         await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));

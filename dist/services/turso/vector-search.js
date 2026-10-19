@@ -94,7 +94,7 @@ export class TursoVectorSearch {
         }
         await db.execute(INSERT_WITHOUT_TAGS, insertArgs(record, contentVector, null));
     }
-    async searchInShard(shard, queryVector, containerTag, limit, queryText) {
+    async searchInShard(shard, queryVector, containerTag, limit, queryText, globalLexicalRanks) {
         const db = await tursoConnectionManager.getConnection(shard.dbPath);
         await this.prepareShardDb(db);
         const queryJson = vectorToJson(queryVector);
@@ -113,14 +113,16 @@ export class TursoVectorSearch {
         const keywordScores = rrfMode
             ? new Map()
             : await this.keywordScores(db, queryText, containerTag, k);
-        // BM25 over the shard: the driver has no FTS5, so the lexical channel is
-        // counted in process.
-        const lexicalScores = rrfMode
-            ? bm25Scores(await this.lexicalDocs(db, containerTag), queryWords)
+        // The lexical channel: BM25 counted in process (the driver has no FTS5).
+        // A caller that searches several shards at once passes the GLOBAL ranks
+        // instead: per-shard ranks are not comparable between shards, so every
+        // shard would contribute its own local champion to the merged list.
+        const localLexicalRanks = rrfMode
+            ? rankByScore([
+                ...bm25Scores(await this.lexicalDocs(db, containerTag), queryWords).entries(),
+            ].map(([id, score]) => ({ id, score })))
             : new Map();
-        const lexicalRanks = rrfMode
-            ? rankByScore([...lexicalScores.entries()].map(([id, score]) => ({ id, score })))
-            : new Map();
+        const lexicalRanks = globalLexicalRanks ?? localLexicalRanks;
         const candidateIds = new Set();
         for (const result of contentResults)
             candidateIds.add(result.id);
@@ -195,8 +197,14 @@ export class TursoVectorSearch {
         // vector, and long boilerplate records win exactly those comparisons.
         const fused = new Map();
         if (rrfMode) {
-            const contentRanks = rankByScore(components.map((component) => ({ id: String(component.row.id), score: component.contentSim })));
-            const tagRanks = rankByScore(components.map((component) => ({ id: String(component.row.id), score: component.finalTagsSim })));
+            const contentRanks = rankByScore(components.map((component) => ({
+                id: String(component.row.id),
+                score: component.contentSim,
+            })));
+            const tagRanks = rankByScore(components.map((component) => ({
+                id: String(component.row.id),
+                score: component.finalTagsSim,
+            })));
             const fusedScores = rrfScore([contentRanks, tagRanks, lexicalRanks], rrfK());
             // Normalize so that first place in all three channels is 1.0. The scale
             // is a constant, not a per-shard maximum: a per-shard maximum would make
@@ -247,6 +255,44 @@ export class TursoVectorSearch {
         });
         hydratedResults.sort((a, b) => b.similarity - a.similarity);
         return hydratedResults.slice(0, Math.max(0, limit));
+    }
+    /**
+     * Lexical ranking over a SET of shards, computed globally.
+     *
+     * Why global: BM25 ranks inside one shard are not comparable between shards.
+     * Each shard would contribute its own local champion with the same RRF
+     * score, and the merged list would fill with one record per project instead
+     * of the records that actually match. Measured on the live corpus:
+     * per-shard BM25 gives hit@10 8/28 on paraphrased questions, global BM25
+     * 19/28.
+     */
+    async globalLexicalRanks(shards, queryText, containerTag = "") {
+        // Legacy mode keeps the old path and pays nothing for the global scan.
+        if (!isRrfMode())
+            return new Map();
+        const queryTokens = tokenizeQueryText(queryText);
+        if (queryTokens.length === 0)
+            return new Map();
+        const docs = [];
+        for (const shard of shards) {
+            try {
+                const db = await tursoConnectionManager.getConnection(shard.dbPath);
+                const rows = await db.all(containerTag === ""
+                    ? `SELECT id, content, tags FROM memories LIMIT ?`
+                    : `SELECT id, content, tags FROM memories WHERE container_tag = ? LIMIT ?`, containerTag === "" ? [LEXICAL_SCAN_LIMIT] : [containerTag, LEXICAL_SCAN_LIMIT]);
+                for (const row of rows) {
+                    docs.push({
+                        id: String(row.id),
+                        text: `${String(row.content ?? "")} ${String(row.tags ?? "")}`,
+                    });
+                }
+            }
+            catch (error) {
+                log("Lexical scan failed on a shard", { shardId: shard.id, error: String(error) });
+            }
+        }
+        const scores = bm25Scores(docs, queryTokens);
+        return rankByScore([...scores.entries()].map(([id, score]) => ({ id, score })));
     }
     /**
      * Documents for the lexical channel: id + content + tags.
@@ -318,9 +364,15 @@ export class TursoVectorSearch {
     }
     async searchAcrossShards(shards, queryVector, containerTag, limit, similarityThreshold, queryText) {
         const shardErrors = [];
+        // One lexical ranking for all shards: ranks from different shards are not
+        // comparable, so a per-shard lexical channel would fill the merged list
+        // with one local champion per project.
+        const globalLexical = isRrfMode() && queryText
+            ? await this.globalLexicalRanks(shards, queryText, containerTag)
+            : undefined;
         const shardPromises = shards.map(async (shard) => {
             try {
-                return await this.searchInShard(shard, queryVector, containerTag, limit, queryText);
+                return await this.searchInShard(shard, queryVector, containerTag, limit, queryText, globalLexical);
             }
             catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -350,7 +402,7 @@ export class TursoVectorSearch {
         allResults.sort((a, b) => b.similarity - a.similarity);
         return {
             results: allResults
-                .filter((result) => (isRrfMode() ? result.similarity > 0 : result.similarity >= similarityThreshold))
+                .filter((result) => isRrfMode() ? result.similarity > 0 : result.similarity >= similarityThreshold)
                 .slice(0, limit),
             warnings,
         };

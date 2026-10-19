@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1); query text carried into the shard search",
-  "commit": "1b4b8b4",
-  "builtAt": "2026-10-19T21:04:38.1163625+03:00",
+  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking computed globally over all shards; query text carried into the shard search",
+  "commit": "f063d65",
+  "builtAt": "2026-10-19T21:12:27.5979418+03:00",
   "distFiles": 294
 }

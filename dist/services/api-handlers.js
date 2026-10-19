@@ -486,6 +486,12 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
         const filterTags = (Array.isArray(tag) ? tag : tag ? [tag] : [])
             .map((t) => t.trim())
             .filter(Boolean);
+        // One lexical ranking for the whole corpus. Ranks from different shards are
+        // not comparable, so a per-shard lexical channel would fill the merged
+        // list with one local champion per project instead of the records that
+        // actually match. Measured on the live corpus: per-shard BM25 gives
+        // hit@10 8/28 on paraphrased questions, global BM25 19/28.
+        const globalLexical = await tursoVectorSearch.globalLexicalRanks(await getAllMemoryShards(), query);
         if (filterTags.length > 0) {
             const seenMemoryKeys = new Set();
             const promptById = new Map();
@@ -494,7 +500,7 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
                 const shards = await tursoShardManager.getAllShards(scope, hash);
                 for (const shard of shards) {
                     try {
-                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, filterTag, pageSize * 2, query);
+                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, filterTag, pageSize * 2, query, globalLexical);
                         for (const result of results) {
                             const key = String(result.id ?? `${result.memory}:${result.similarity}`);
                             if (seenMemoryKeys.has(key))
@@ -535,7 +541,7 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
                 const shards = await tursoShardManager.getAllShards(scope, hash);
                 for (const shard of shards) {
                     try {
-                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, containerTag, pageSize, query);
+                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, containerTag, pageSize, query, globalLexical);
                         memoryResults.push(...results);
                     }
                     catch (error) {

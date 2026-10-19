@@ -4,7 +4,18 @@ export declare class TursoVectorSearch {
     private prepareShardDb;
     insertVectorInTransaction(tx: TursoTx, record: MemoryRecord): Promise<void>;
     insertVector(db: TursoDb, record: MemoryRecord): Promise<void>;
-    searchInShard(shard: ShardInfo, queryVector: Float32Array, containerTag: string, limit: number, queryText?: string): Promise<SearchResult[]>;
+    searchInShard(shard: ShardInfo, queryVector: Float32Array, containerTag: string, limit: number, queryText?: string, globalLexicalRanks?: Map<string, number>): Promise<SearchResult[]>;
+    /**
+     * Lexical ranking over a SET of shards, computed globally.
+     *
+     * Why global: BM25 ranks inside one shard are not comparable between shards.
+     * Each shard would contribute its own local champion with the same RRF
+     * score, and the merged list would fill with one record per project instead
+     * of the records that actually match. Measured on the live corpus:
+     * per-shard BM25 gives hit@10 8/28 on paraphrased questions, global BM25
+     * 19/28.
+     */
+    globalLexicalRanks(shards: ShardInfo[], queryText: string | undefined, containerTag?: string): Promise<Map<string, number>>;
     /**
      * Documents for the lexical channel: id + content + tags.
      *

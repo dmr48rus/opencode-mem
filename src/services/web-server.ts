@@ -9,6 +9,7 @@ import { assertWebServerNetworkAuth, authorizeApiRequest } from "./web-api-auth.
 import { getOrCreateAuthToken, isAuthorizedApiRequest } from "./auth-token.js";
 import { WebAuth } from "./web-auth.js";
 import { NODE_HTTP_IDLE_TIMEOUT_MS } from "./request-timeouts.js";
+import { checkMcpHost, handleMcpJsonRpc, type McpToolResult } from "./mcp-endpoint.js";
 import {
   handleListTags,
   handleListMemories,
@@ -17,6 +18,8 @@ import {
   handleBulkDelete,
   handleUpdateMemory,
   handleSearch,
+  handleSnapshot,
+  handleRememberByProject,
   handleStats,
   handlePinMemory,
   handleUnpinMemory,
@@ -446,6 +449,48 @@ export class WebServer {
 
   // --- HTTP request handling ---
 
+  private async runMcpTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+    const asText = (value: unknown): McpToolResult => ({
+      content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    });
+    const failed = (message: string): McpToolResult => ({
+      content: [{ type: "text", text: message }],
+      isError: true,
+    });
+
+    switch (name) {
+      case "memory_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) return failed("query is required");
+        const limit = Math.max(1, Math.min(25, Number(args.limit) || 8));
+        return asText(await handleSearch(query, undefined, 1, limit));
+      }
+      case "memory_snapshot": {
+        return asText(await handleSnapshot(Number(args.limit) || 10));
+      }
+      case "memory_profile": {
+        const userId = args.userId ? String(args.userId) : undefined;
+        return asText(await handleGetUserProfile(userId));
+      }
+      case "memory_remember": {
+        return asText(
+          await handleRememberByProject({
+            content: String(args.content ?? ""),
+            tags: Array.isArray(args.tags) ? args.tags.map((tag) => String(tag)) : [],
+            project: args.project ? String(args.project) : "",
+          })
+        );
+      }
+      case "memory_forget": {
+        const id = String(args.id ?? "").trim();
+        if (!id) return failed("id is required");
+        return asText(await handleDeleteMemory(id));
+      }
+      default:
+        return failed(`unknown tool ${name}`);
+    }
+  }
+
   private async handleRequest(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -485,6 +530,44 @@ export class WebServer {
           success: true,
           status: "ok",
           authEnabled: auth?.isEnabled() ?? false,
+        });
+      }
+
+      // MCP over HTTP: a client needs a URL and a token, nothing else - no
+      // Python, no build, no local store. That is what makes the memory
+      // reachable from a harness on another machine.
+      if (path === "/mcp" && method === "POST") {
+        if (!isAuthorizedApiRequest(req)) {
+          const configuredTokenFailure = this.config.apiToken
+            ? authorizeApiRequest(req, this.config.apiToken)
+            : null;
+          if (!this.config.apiToken || configuredTokenFailure) {
+            return (
+              configuredTokenFailure ??
+              this.jsonResponse({ success: false, error: "Unauthorized" }, 401)
+            );
+          }
+        }
+        const hostFailure = checkMcpHost(req.headers.get("host"));
+        if (hostFailure) {
+          return this.jsonResponse({ success: false, error: hostFailure }, 403);
+        }
+        let body: unknown;
+        try {
+          body = await req.json();
+        } catch {
+          return this.jsonResponse(
+            { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
+            400
+          );
+        }
+        const { status, payload } = await handleMcpJsonRpc(body, (name, args) =>
+          this.runMcpTool(name, args)
+        );
+        if (payload === null) return new Response(null, { status });
+        return new Response(JSON.stringify(payload), {
+          status,
+          headers: { "content-type": "application/json" },
         });
       }
 

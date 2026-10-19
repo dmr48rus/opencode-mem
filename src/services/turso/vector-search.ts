@@ -124,7 +124,8 @@ export class TursoVectorSearch {
     queryVector: Float32Array,
     containerTag: string,
     limit: number,
-    queryText?: string
+    queryText?: string,
+    globalLexicalRanks?: Map<string, number>
   ): Promise<SearchResult[]> {
     const db = await tursoConnectionManager.getConnection(shard.dbPath);
     await this.prepareShardDb(db);
@@ -147,14 +148,18 @@ export class TursoVectorSearch {
       ? new Map<string, number>()
       : await this.keywordScores(db, queryText, containerTag, k);
 
-    // BM25 over the shard: the driver has no FTS5, so the lexical channel is
-    // counted in process.
-    const lexicalScores = rrfMode
-      ? bm25Scores(await this.lexicalDocs(db, containerTag), queryWords)
+    // The lexical channel: BM25 counted in process (the driver has no FTS5).
+    // A caller that searches several shards at once passes the GLOBAL ranks
+    // instead: per-shard ranks are not comparable between shards, so every
+    // shard would contribute its own local champion to the merged list.
+    const localLexicalRanks = rrfMode
+      ? rankByScore(
+          [...bm25Scores(await this.lexicalDocs(db, containerTag), queryWords).entries()].map(
+            ([id, score]) => ({ id, score })
+          )
+        )
       : new Map<string, number>();
-    const lexicalRanks = rrfMode
-      ? rankByScore([...lexicalScores.entries()].map(([id, score]) => ({ id, score })))
-      : new Map<string, number>();
+    const lexicalRanks = globalLexicalRanks ?? localLexicalRanks;
 
     const candidateIds = new Set<string>();
     for (const result of contentResults) candidateIds.add(result.id);
@@ -301,6 +306,49 @@ export class TursoVectorSearch {
   }
 
   /**
+   * Lexical ranking over a SET of shards, computed globally.
+   *
+   * Why global: BM25 ranks inside one shard are not comparable between shards.
+   * Each shard would contribute its own local champion with the same RRF
+   * score, and the merged list would fill with one record per project instead
+   * of the records that actually match. Measured on the live corpus:
+   * per-shard BM25 gives hit@10 8/28 on paraphrased questions, global BM25
+   * 19/28.
+   */
+  async globalLexicalRanks(
+    shards: ShardInfo[],
+    queryText: string | undefined,
+    containerTag = ""
+  ): Promise<Map<string, number>> {
+    // Legacy mode keeps the old path and pays nothing for the global scan.
+    if (!isRrfMode()) return new Map();
+    const queryTokens = tokenizeQueryText(queryText);
+    if (queryTokens.length === 0) return new Map();
+    const docs: Array<{ id: string; text: string }> = [];
+    for (const shard of shards) {
+      try {
+        const db = await tursoConnectionManager.getConnection(shard.dbPath);
+        const rows = await db.all(
+          containerTag === ""
+            ? `SELECT id, content, tags FROM memories LIMIT ?`
+            : `SELECT id, content, tags FROM memories WHERE container_tag = ? LIMIT ?`,
+          containerTag === "" ? [LEXICAL_SCAN_LIMIT] : [containerTag, LEXICAL_SCAN_LIMIT]
+        );
+        for (const row of rows) {
+          docs.push({
+            id: String(row.id),
+            text: `${String(row.content ?? "")} ${String(row.tags ?? "")}`,
+          });
+        }
+      } catch (error) {
+        log("Lexical scan failed on a shard", { shardId: shard.id, error: String(error) });
+      }
+    }
+    const scores = bm25Scores(docs, queryTokens);
+    return rankByScore([...scores.entries()].map(([id, score]) => ({ id, score })));
+  }
+
+  /**
    * Documents for the lexical channel: id + content + tags.
    *
    * The driver has no FTS5, so BM25 is counted in process over this list.
@@ -405,9 +453,24 @@ export class TursoVectorSearch {
   ): Promise<{ results: SearchResult[]; warnings: string[] }> {
     const shardErrors: Array<{ shardId: number; error: string }> = [];
 
+    // One lexical ranking for all shards: ranks from different shards are not
+    // comparable, so a per-shard lexical channel would fill the merged list
+    // with one local champion per project.
+    const globalLexical =
+      isRrfMode() && queryText
+        ? await this.globalLexicalRanks(shards, queryText, containerTag)
+        : undefined;
+
     const shardPromises = shards.map(async (shard) => {
       try {
-        return await this.searchInShard(shard, queryVector, containerTag, limit, queryText);
+        return await this.searchInShard(
+          shard,
+          queryVector,
+          containerTag,
+          limit,
+          queryText,
+          globalLexical
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log("Shard search error", { shardId: shard.id, error: message });

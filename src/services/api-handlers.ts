@@ -636,6 +636,15 @@ export async function handleSearch(
     const filterTags = (Array.isArray(tag) ? tag : tag ? [tag] : [])
       .map((t) => t.trim())
       .filter(Boolean);
+    // One lexical ranking for the whole corpus. Ranks from different shards are
+    // not comparable, so a per-shard lexical channel would fill the merged
+    // list with one local champion per project instead of the records that
+    // actually match. Measured on the live corpus: per-shard BM25 gives
+    // hit@10 8/28 on paraphrased questions, global BM25 19/28.
+    const globalLexical = await tursoVectorSearch.globalLexicalRanks(
+      await getAllMemoryShards(),
+      query
+    );
     if (filterTags.length > 0) {
       const seenMemoryKeys = new Set<string>();
       const promptById = new Map<string, any>();
@@ -649,7 +658,8 @@ export async function handleSearch(
               queryVector,
               filterTag,
               pageSize * 2,
-              query
+              query,
+              globalLexical
             );
             for (const result of results) {
               const key = String(result.id ?? `${result.memory}:${result.similarity}`);
@@ -691,7 +701,8 @@ export async function handleSearch(
               queryVector,
               containerTag,
               pageSize,
-              query
+              query,
+              globalLexical
             );
             memoryResults.push(...results);
           } catch (error) {

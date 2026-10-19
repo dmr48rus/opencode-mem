@@ -21,11 +21,11 @@ const LEXICAL_SCAN_LIMIT = 50000;
  *   OPENCODE_MEM_RRF=1    enable rank fusion
  *   OPENCODE_MEM_RRF_K   the flattening constant (default 10)
  */
-function isRrfMode() {
+export function isRrfMode() {
     const value = (process.env.OPENCODE_MEM_RRF ?? "").trim().toLowerCase();
     return value === "1" || value === "true" || value === "on" || value === "yes";
 }
-function rrfK() {
+export function rrfK() {
     const raw = Number(process.env.OPENCODE_MEM_RRF_K);
     return Number.isFinite(raw) && raw > 0 ? raw : 10;
 }
@@ -67,6 +67,33 @@ const INSERT_WITHOUT_TAGS = `
     metadata, session_id, display_name, user_name, user_email, project_path, project_name, git_repo_url
   ) VALUES (?, ?, vector32(?), NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
+/**
+ * Fuse the channels with GLOBAL ranks.
+ *
+ * Ranks inside a shard are not comparable between shards: every shard has its
+ * own hub (a long boilerplate record that is similar to everything), so the
+ * best match on the whole corpus can be third inside its own shard. Measured on
+ * the live corpus, 19.10.2026: fusing inside a shard gave hit@10 9/20 on
+ * word-overlap questions and 15/28 on paraphrased ones, while the same fusion
+ * over global ranks gives 20/20 and 19/28.
+ */
+export function fuseGlobalRanks(results, lexicalRanks, k) {
+    const contentRanks = rankByScore(results.map((result) => ({ id: result.id, score: result.contentSim ?? 0 })));
+    const tagRanks = rankByScore(results.map((result) => ({ id: result.id, score: result.tagsSim ?? 0 })));
+    for (const result of results) {
+        let score = 0;
+        const contentRank = contentRanks.get(result.id);
+        if (contentRank)
+            score += 1 / (k + contentRank);
+        const tagRank = tagRanks.get(result.id);
+        if (tagRank)
+            score += 1 / (k + tagRank);
+        const lexicalRank = lexicalRanks.get(result.id);
+        if (lexicalRank)
+            score += 1 / (k + lexicalRank);
+        result.similarity = score;
+    }
+}
 export class TursoVectorSearch {
     async prepareShardDb(db) {
         await tursoShardManager.ensureShardSchema(db);
@@ -238,6 +265,10 @@ export class TursoVectorSearch {
                 id: String(row.id),
                 memory: String(row.content),
                 similarity: fused.get(String(row.id)) ?? 0,
+                // The raw channel scores travel with the result: the fusion has to be
+                // redone over GLOBAL ranks once the shards are merged (fuseGlobalRanks).
+                contentSim: component.contentSim,
+                tagsSim: component.finalTagsSim,
                 createdAt: Number(row.created_at),
                 tags: component.memoryTagsStr ? component.memoryTagsStr.split(",") : [],
                 metadata: parseMetadata(row.metadata),

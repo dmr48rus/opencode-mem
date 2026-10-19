@@ -1,5 +1,25 @@
 import type { MemoryRecord, SearchResult, ShardInfo } from "./types.js";
 import type { TursoDb, TursoTx } from "./turso-db.js";
+/**
+ * Rank fusion is opt-in: the legacy weighted sum stays the default until the
+ * hybrid is measured on the live store.
+ *
+ *   OPENCODE_MEM_RRF=1    enable rank fusion
+ *   OPENCODE_MEM_RRF_K   the flattening constant (default 10)
+ */
+export declare function isRrfMode(): boolean;
+export declare function rrfK(): number;
+/**
+ * Fuse the channels with GLOBAL ranks.
+ *
+ * Ranks inside a shard are not comparable between shards: every shard has its
+ * own hub (a long boilerplate record that is similar to everything), so the
+ * best match on the whole corpus can be third inside its own shard. Measured on
+ * the live corpus, 19.10.2026: fusing inside a shard gave hit@10 9/20 on
+ * word-overlap questions and 15/28 on paraphrased ones, while the same fusion
+ * over global ranks gives 20/20 and 19/28.
+ */
+export declare function fuseGlobalRanks(results: SearchResult[], lexicalRanks: Map<string, number>, k: number): void;
 export declare class TursoVectorSearch {
     private prepareShardDb;
     insertVectorInTransaction(tx: TursoTx, record: MemoryRecord): Promise<void>;

@@ -118,9 +118,7 @@ export class TursoVectorSearch {
         // instead: per-shard ranks are not comparable between shards, so every
         // shard would contribute its own local champion to the merged list.
         const localLexicalRanks = rrfMode
-            ? rankByScore([
-                ...bm25Scores(await this.lexicalDocs(db, containerTag), queryWords).entries(),
-            ].map(([id, score]) => ({ id, score })))
+            ? rankByScore([...bm25Scores(await this.lexicalDocs(db, containerTag), queryWords).entries()].map(([id, score]) => ({ id, score })))
             : new Map();
         const lexicalRanks = globalLexicalRanks ?? localLexicalRanks;
         const candidateIds = new Set();

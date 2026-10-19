@@ -109,6 +109,30 @@ interface FormattedMemory {
 }
 type SearchResultItem = FormattedPrompt | FormattedMemory;
 export declare function handleSearch(query: string, tag?: string | string[], page?: number, pageSize?: number): Promise<ApiResponse<PaginatedResponse<SearchResultItem>>>;
+/**
+ * The state of the store without a question: pinned and recent records plus
+ * counts.
+ *
+ * No embedding is computed here, and that is the point: the packet is cheap
+ * enough to read at the start of every session, where a search would cost an
+ * embedding call per query. The shape follows the bootstrap read of the
+ * remind project.
+ */
+export declare function handleSnapshot(limit?: number): Promise<ApiResponse<any>>;
+/**
+ * Write a record into a project scope.
+ *
+ * The scope tag is `opencode_project_<hash>` and the readable path is known
+ * only from the tags the shards carry, so the project is resolved here - by
+ * path first, then by name - and a miss names the known projects instead of
+ * failing silently.
+ */
+export declare function handleRememberByProject(data: {
+    content: string;
+    tags?: string[];
+    project?: string;
+    type?: string;
+}): Promise<ApiResponse<any>>;
 export declare function handleStats(): Promise<ApiResponse<{
     total: number;
     byScope: {

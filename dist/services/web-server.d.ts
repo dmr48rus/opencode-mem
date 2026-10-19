@@ -48,6 +48,7 @@ export declare class WebServer {
     isServerOwner(): boolean;
     getUrl(): string;
     checkServerAvailable(): Promise<boolean>;
+    private runMcpTool;
     private handleRequest;
     private contentTypeFor;
     private serveStaticFile;

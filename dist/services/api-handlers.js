@@ -655,6 +655,147 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
         return { success: false, error: String(error) };
     }
 }
+/**
+ * The state of the store without a question: pinned and recent records plus
+ * counts.
+ *
+ * No embedding is computed here, and that is the point: the packet is cheap
+ * enough to read at the start of every session, where a search would cost an
+ * embedding call per query. The shape follows the bootstrap read of the
+ * remind project.
+ */
+export async function handleSnapshot(limit = 10) {
+    try {
+        const size = Math.max(1, Math.min(50, Number(limit) || 10));
+        const shards = await getAllMemoryShards();
+        const recent = [];
+        const pinned = [];
+        const counts = {};
+        let total = 0;
+        for (const shard of shards) {
+            const db = await tursoConnectionManager.getConnection(shard.dbPath);
+            const typeRows = await db.all(`SELECT type, COUNT(*) AS n FROM memories GROUP BY type`);
+            for (const row of typeRows) {
+                const key = row.type ? String(row.type) : "unknown";
+                counts[key] = (counts[key] ?? 0) + Number(row.n ?? 0);
+                total += Number(row.n ?? 0);
+            }
+            const rows = await db.all(`SELECT id, content, type, tags, created_at, is_pinned, project_name
+         FROM memories ORDER BY created_at DESC LIMIT ?`, [size * 2]);
+            for (const row of rows) {
+                const item = {
+                    id: String(row.id),
+                    content: String(row.content ?? "").slice(0, 400),
+                    type: row.type ? String(row.type) : undefined,
+                    tags: row.tags ? String(row.tags).split(",").filter(Boolean) : [],
+                    createdAt: safeToISOString(row.created_at),
+                    pinned: Boolean(row.is_pinned),
+                    project: row.project_name ? String(row.project_name) : undefined,
+                };
+                if (item.pinned) {
+                    if (pinned.length < size)
+                        pinned.push(item);
+                }
+                else {
+                    recent.push(item);
+                }
+            }
+        }
+        recent.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        return {
+            success: true,
+            data: {
+                pinned,
+                recent: recent.slice(0, size),
+                counts,
+                total,
+                generatedAt: new Date().toISOString(),
+            },
+        };
+    }
+    catch (error) {
+        log("handleSnapshot: error", { error: String(error) });
+        return { success: false, error: String(error) };
+    }
+}
+/**
+ * Write a record into a project scope.
+ *
+ * The scope tag is `opencode_project_<hash>` and the readable path is known
+ * only from the tags the shards carry, so the project is resolved here - by
+ * path first, then by name - and a miss names the known projects instead of
+ * failing silently.
+ */
+export async function handleRememberByProject(data) {
+    try {
+        const content = String(data.content ?? "").trim();
+        if (!content)
+            return { success: false, error: "content is required" };
+        const tags = (data.tags ?? []).map((t) => String(t).trim()).filter(Boolean);
+        const resolved = await resolveProjectTag(String(data.project ?? "").trim());
+        if (resolved.error)
+            return { success: false, error: resolved.error };
+        return await handleAddMemory({
+            content,
+            containerTag: resolved.tag,
+            tags,
+            type: data.type ?? "fact",
+            metadata: { source: "mcp" },
+        });
+    }
+    catch (error) {
+        log("handleRememberByProject: error", { error: String(error) });
+        return { success: false, error: String(error) };
+    }
+}
+async function resolveProjectTag(wanted) {
+    const shards = await getAllMemoryShards();
+    const entries = [];
+    for (const shard of shards) {
+        const db = await tursoConnectionManager.getConnection(shard.dbPath);
+        const distinct = await tursoVectorSearch.getDistinctTags(db);
+        for (const t of distinct) {
+            if (!t.container_tag)
+                continue;
+            const tag = String(t.container_tag);
+            if (entries.some((entry) => entry.tag === tag))
+                continue;
+            const newestRow = await db.all(`SELECT created_at FROM memories WHERE container_tag = ? ORDER BY created_at DESC LIMIT 1`, [tag]);
+            entries.push({
+                tag,
+                path: t.project_path ? String(t.project_path) : undefined,
+                name: t.project_name ? String(t.project_name) : undefined,
+                newest: Number(newestRow[0]?.created_at ?? 0),
+            });
+        }
+    }
+    const norm = wanted.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+    if (!norm) {
+        // No project named: the project of the newest record is the current one.
+        const newest = entries.slice().sort((a, b) => b.newest - a.newest)[0];
+        if (!newest)
+            return { tag: "", error: "no project scope exists yet in this store" };
+        return { tag: newest.tag, error: "" };
+    }
+    for (const entry of entries) {
+        if (entry.path && entry.path.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase() === norm) {
+            return { tag: entry.tag, error: "" };
+        }
+    }
+    for (const entry of entries) {
+        if (entry.name && entry.name.toLowerCase() === norm)
+            return { tag: entry.tag, error: "" };
+    }
+    const known = entries
+        .map((entry) => entry.name ?? entry.path ?? entry.tag)
+        .filter(Boolean)
+        .slice(0, 25)
+        .join(", ");
+    return {
+        tag: "",
+        error: `unknown project scope for ${wanted}; known projects: ${known}`,
+    };
+}
 export async function handleStats() {
     try {
         // Stats only counts Turso/libSQL rows; no embedding needed.

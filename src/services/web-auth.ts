@@ -79,6 +79,13 @@ export class WebAuth {
     // responsibilities, and neither one has to know about the other.
     if (path.startsWith("/api/")) return { ok: true };
 
+    // The MCP endpoint carries the same credential as the API and checks it
+    // itself (web-server.ts). Without this exemption the Basic challenge would
+    // run first and refuse every MCP client that sends the token in the
+    // header - measured on the live server: /mcp answered 401 while /api/*
+    // answered 200 with the very same header.
+    if (path === "/mcp") return { ok: true };
+
     const header = req.headers.get("Authorization");
     if (header) {
       const decoded = decodeBasicAuth(header);

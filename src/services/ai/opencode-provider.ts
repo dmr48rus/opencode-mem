@@ -1042,6 +1042,15 @@ async function tryGenerateViaRealSession<T>(
 
   const created = await localServerFetch(config, "POST", "/api/session", {
     title: INTERNAL_CAPTURE_SESSION_TITLE,
+    // The session has to look like it came from inside OpenCode, or the free
+    // tier refuses it with 403 "can only be used from within OpenCode". The
+    // router's working call creates the session exactly this way: no client id
+    // (a client id is refused too), the built-in agent, and the model at
+    // creation. Measured 20.10.2026: the previous body (a title only, with the
+    // model pinned afterwards) was refused, and that is what lost 10.9% of the
+    // captured prompts - 87% on that day.
+    agent: "build",
+    model: { providerID, id: modelID },
   });
   const sessionID =
     (created as { data?: { id?: string } })?.data?.id ??

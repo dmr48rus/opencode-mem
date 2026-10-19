@@ -486,12 +486,24 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
         const filterTags = (Array.isArray(tag) ? tag : tag ? [tag] : [])
             .map((t) => t.trim())
             .filter(Boolean);
-        // One lexical ranking for the whole corpus. Ranks from different shards are
-        // not comparable, so a per-shard lexical channel would fill the merged
-        // list with one local champion per project instead of the records that
-        // actually match. Measured on the live corpus: per-shard BM25 gives
-        // hit@10 8/28 on paraphrased questions, global BM25 19/28.
-        const globalLexical = await tursoVectorSearch.globalLexicalRanks(await getAllMemoryShards(), query);
+        // The lexical ranking is computed only when it is used. Computing it
+        // unconditionally cost a full pass over every shard in legacy mode, and
+        // it broke the tag-migration test, whose scenario runs with a mocked
+        // config that has no storagePath at all.
+        //
+        // And it is an addition, not a requirement: if the shards cannot be read,
+        // the search still works with the vector channels alone.
+        let globalLexical = new Map();
+        if (isRrfMode()) {
+            try {
+                globalLexical = await tursoVectorSearch.globalLexicalRanks(await getAllMemoryShards(), query);
+            }
+            catch (error) {
+                log("Global lexical ranking failed; continuing without it", {
+                    error: String(error),
+                });
+            }
+        }
         if (filterTags.length > 0) {
             const seenMemoryKeys = new Set();
             const promptById = new Map();

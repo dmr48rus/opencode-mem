@@ -1,0 +1,8 @@
+# Bun configuration for the fork.
+#
+# The preload keeps the production switch (OPENCODE_MEM_RRF) out of the test
+# environment: the suite asserts the legacy scoring, and an ambient "1" would
+# move every search onto the fusion path and make the suite fail for a reason
+# that has nothing to do with the change under test.
+[test]
+preload = ["./tests/setup-env.ts"]

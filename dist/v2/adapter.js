@@ -95,10 +95,18 @@ export async function registerV2Adapter(ctx, legacy) {
                 // row on the server is what create/update/delete act on.
                 const path = skillsManager.skillPath(skill.id);
                 const absolutePath = isAbsolute(path) ? path : resolve(path);
+                // The description is REQUIRED by the host schema, and a schema error
+                // disables the WHOLE plugin - not the one skill. Measured 19.10.2026:
+                // eight fixture skills on the server had an empty description and the
+                // memory plugin stopped loading entirely (port 4748 never came up).
+                // So the description is always a string, even when the row has none.
+                const description = typeof skill.description === "string" && skill.description.trim()
+                    ? skill.description
+                    : `Skill ${skill.name} (no description)`;
                 const payload = {
                     id: skill.id,
                     name: skill.name,
-                    description: skill.description || undefined,
+                    description,
                     autoinvoke: skill.autoinvoke,
                     path: absolutePath,
                     content: skill.content,

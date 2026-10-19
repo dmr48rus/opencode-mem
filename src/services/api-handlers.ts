@@ -1,7 +1,7 @@
 import { embeddingService } from "./embedding.js";
 import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
 import { tursoShardManager } from "./turso/shard-manager.js";
-import { tursoVectorSearch } from "./turso/vector-search.js";
+import { fuseGlobalRanks, isRrfMode, rrfK, tursoVectorSearch } from "./turso/vector-search.js";
 import { tursoConnectionManager } from "./turso/connection-manager.js";
 import { ensureTursoReady } from "./turso/ready.js";
 import { formatTagsForEmbedding, parseSessionIdFromMetadata } from "./turso/vector-utils.js";
@@ -711,6 +711,14 @@ export async function handleSearch(
         }
       }
       promptResults = await userPromptManager.searchPrompts(query, undefined, pageSize * 2);
+    }
+
+    // The shards are merged here, so this is the first place where the ranks
+    // of the channels are comparable. Fusing inside a shard (see
+    // searchInShard) ranks every shard against its own hub, and the best match
+    // on the whole corpus loses to the hub of its own project.
+    if (isRrfMode()) {
+      fuseGlobalRanks(memoryResults, globalLexical, rrfK());
     }
 
     const formattedPrompts: FormattedPrompt[] = promptResults.map((p) => ({

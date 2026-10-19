@@ -34,6 +34,9 @@ export interface SearchResult {
   id: string;
   memory: string;
   similarity: number;
+  /** Raw channel scores, kept so the fusion can rank GLOBALLY (see fuseGlobalRanks). */
+  contentSim?: number;
+  tagsSim?: number;
   createdAt?: number;
   tags?: string[];
   metadata?: Record<string, unknown>;

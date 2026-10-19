@@ -139,6 +139,15 @@ export function memoryShardMigrations(dimensions: number): SchemaMigration[] {
         },
       ],
     },
+    {
+      version: 3,
+      description:
+        "Aged-out marker for the memory sweep: the record is kept, but it no longer surfaces in search",
+      statements: [
+        { sql: `ALTER TABLE memories ADD COLUMN aged_at INTEGER` },
+        { sql: `CREATE INDEX IF NOT EXISTS idx_aged_at ON memories(aged_at)` },
+      ],
+    },
   ];
 }
 

@@ -19,6 +19,7 @@ import {
   handleUpdateMemory,
   handleSearch,
   handleSnapshot,
+  handleRunSweep,
   handleRememberByProject,
   handleStats,
   handlePinMemory,
@@ -679,6 +680,19 @@ export class WebServer {
 
       if (path === "/api/cleanup" && method === "POST") {
         const result = await handleRunCleanup();
+        return this.jsonResponse(result);
+      }
+
+      // The sweep is a dry run unless the caller says otherwise: forgetting is
+      // not something a request should do by accident.
+      if (path === "/api/sweep" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleRunSweep({
+          dryRun: body.dryRun !== false,
+          episodicDays: body.episodicDays,
+          proceduralDays: body.proceduralDays,
+          limit: body.limit,
+        });
         return this.jsonResponse(result);
       }
 

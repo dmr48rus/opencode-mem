@@ -872,7 +872,7 @@ export async function handleSnapshot(limit: number = 10): Promise<ApiResponse<an
       }
       const rows = await db.all(
         `SELECT id, content, type, tags, created_at, is_pinned, project_name
-         FROM memories ORDER BY created_at DESC LIMIT ?`,
+         FROM memories WHERE aged_at IS NULL ORDER BY created_at DESC LIMIT ?`,
         [size * 2]
       );
       for (const row of rows) {
@@ -988,6 +988,35 @@ async function resolveProjectTag(wanted: string): Promise<{ tag: string; error: 
     tag: "",
     error: `unknown project scope for ${wanted}; known projects: ${known}`,
   };
+}
+
+/**
+ * Age the memories that may be forgotten.
+ *
+ * The sweep is a dry run unless the caller asks otherwise: forgetting is not
+ * something a request should do by accident. The records are marked, not
+ * deleted - the content stays, the marker can be cleared, and the search stops
+ * returning them.
+ */
+export async function handleRunSweep(data?: {
+  dryRun?: boolean;
+  episodicDays?: number;
+  proceduralDays?: number;
+  limit?: number;
+}): Promise<ApiResponse<any>> {
+  try {
+    const { runMemorySweep } = await import("./memory-aging.js");
+    const report = await runMemorySweep({
+      dryRun: data?.dryRun !== false,
+      episodicDays: data?.episodicDays,
+      proceduralDays: data?.proceduralDays,
+      limit: data?.limit,
+    });
+    return { success: true, data: report };
+  } catch (error) {
+    log("handleRunSweep: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
 }
 
 export async function handleStats(): Promise<

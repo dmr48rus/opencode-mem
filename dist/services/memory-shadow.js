@@ -98,9 +98,16 @@ export async function runShadowReindex(options = {}) {
     for (const shard of shards) {
         const db = await tursoConnectionManager.getConnection(shard.dbPath);
         await tursoShardManager.ensureShardSchema(db);
+        // Records whose shadow vector came from another model are re-embedded:
+        // a model swap has to reach the whole corpus, not only the empty cells.
         const pending = await db.all(`SELECT id, content FROM memories
-       WHERE shadow_vector IS NULL AND aged_at IS NULL
-       LIMIT ?`, [limit - processed]);
+       WHERE aged_at IS NULL
+         AND (shadow_vector IS NULL OR shadow_model IS NULL OR shadow_model != ?)
+       LIMIT ?`, [model, limit - processed]);
+        const left = await db.get(`SELECT COUNT(*) AS n FROM memories
+       WHERE aged_at IS NULL
+         AND (shadow_vector IS NULL OR shadow_model IS NULL OR shadow_model != ?)`, [model]);
+        remaining += Number(left?.n ?? 0);
         if (pending.length === 0)
             continue;
         const texts = pending.map((row) => String(row.content ?? ""));
@@ -139,8 +146,6 @@ export async function runShadowReindex(options = {}) {
             }
             processed += 1;
         }
-        const left = await db.get(`SELECT COUNT(*) AS n FROM memories WHERE shadow_vector IS NULL AND aged_at IS NULL`);
-        remaining += Number(left?.n ?? 0);
     }
     return {
         model,

@@ -1,4 +1,10 @@
 import { embeddingService, getShadowEmbeddingService } from "./embedding.js";
+import {
+  collectDailyStats,
+  collectProfileStats,
+  collectShardStats,
+  type CollectDailyStatsOptions,
+} from "./stats-service.js";
 import type { ShadowMode } from "./turso/vector-search.js";
 import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
 import { tursoShardManager } from "./turso/shard-manager.js";
@@ -1112,11 +1118,18 @@ export async function handleRunSweep(data?: {
   }
 }
 
-export async function handleStats(): Promise<
+export async function handleStats(
+  options: Pick<CollectDailyStatsOptions, "logDir" | "now"> & { probe?: boolean } = {}
+): Promise<
   ApiResponse<{
     total: number;
     byScope: { user: number; project: number };
     byType: Record<string, number>;
+    generatedAt: string;
+    shards: Awaited<ReturnType<typeof collectShardStats>>["shards"];
+    profile: Awaited<ReturnType<typeof collectProfileStats>>;
+    daily: ReturnType<typeof collectDailyStats>;
+    dailyError?: string;
     memoryMb?: { rss: number; heapUsed: number; external: number };
   }>
 > {
@@ -1131,29 +1144,43 @@ export async function handleStats(): Promise<
       heapUsed: Math.round(memory.heapUsed / 1048576),
       external: Math.round(memory.external / 1048576),
     };
-    // Stats only counts Turso/libSQL rows; no embedding needed.
-    // See handleListTags comment - keep embedding init out of read paths.
-    const shards = await getAllMemoryShards();
-    let userCount = 0,
-      projectCount = 0;
-    const typeCount: Record<string, number> = {};
-    for (const shard of shards) {
-      const db = await tursoConnectionManager.getConnection(shard.dbPath);
-      const memories = await tursoVectorSearch.getAllMemories(db);
-      for (const r of memories) {
-        const containerTag = String(r.container_tag ?? "");
-        const type = r.type ? String(r.type) : "";
-        if (containerTag.includes("_user_")) userCount++;
-        else if (containerTag.includes("_project_")) projectCount++;
-        if (type) typeCount[type] = (typeCount[type] || 0) + 1;
-      }
+
+    // Ownership and liveness probes must stay cheap: the auth already ran, and
+    // walking the shards or scanning the logs does not belong in a liveness
+    // check.
+    if (options.probe) {
+      // The probe answers with the bare acknowledgement: it is a liveness and
+      // ownership check, and anything more would be work nobody asked for.
+      return { success: true } as ApiResponse<any>;
     }
+
+    // Shard listing failures stay hard errors, so that the consumers of
+    // /api/stats never treat an empty total as a successful empty store.
+    const memoryShards = await getAllMemoryShards();
+    const [shardStats, profile] = await Promise.all([
+      collectShardStats(memoryShards),
+      collectProfileStats(),
+    ]);
+
+    let daily: ReturnType<typeof collectDailyStats> = [];
+    let dailyError: string | undefined;
+    try {
+      daily = collectDailyStats(options);
+    } catch (error) {
+      dailyError = error instanceof Error ? error.message : String(error);
+    }
+
     return {
       success: true,
       data: {
-        total: userCount + projectCount,
-        byScope: { user: userCount, project: projectCount },
-        byType: typeCount,
+        total: shardStats.total,
+        byScope: shardStats.byScope,
+        byType: shardStats.byType,
+        generatedAt: new Date().toISOString(),
+        shards: shardStats.shards,
+        profile,
+        daily,
+        ...(dailyError ? { dailyError } : {}),
         memoryMb,
       },
     };

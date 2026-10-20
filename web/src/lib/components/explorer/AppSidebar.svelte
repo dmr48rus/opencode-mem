@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Activity from "@lucide/svelte/icons/activity";
   import Brain from "@lucide/svelte/icons/brain";
   import Folder from "@lucide/svelte/icons/folder";
   import Languages from "@lucide/svelte/icons/languages";
@@ -32,6 +33,7 @@
     projectLabel: string;
     profileLabel: string;
     skillsLabel: string;
+    statsLabel: string;
     langLabel: string;
     languageLabel: string;
     themeLabel: string;
@@ -48,6 +50,7 @@
     projectLabel,
     profileLabel,
     skillsLabel,
+    statsLabel,
     langLabel,
     languageLabel,
     themeLabel,
@@ -177,6 +180,19 @@
       <ScrollText class={cn(ICON, "shrink-0")} aria-hidden="true" />
       {#if !iconOnly}
         <span class="truncate text-start">{skillsLabel}</span>
+      {/if}
+    </a>
+    <a
+      href={ROUTES.stats}
+      class={navClass(currentView === "stats")}
+      aria-current={currentView === "stats" ? "page" : undefined}
+      title={statsLabel}
+      aria-label={statsLabel}
+      onclick={(e) => onNavClick(e, ROUTES.stats)}
+    >
+      <Activity class={cn(ICON, "shrink-0")} aria-hidden="true" />
+      {#if !iconOnly}
+        <span class="truncate text-start">{statsLabel}</span>
       {/if}
     </a>
   </nav>

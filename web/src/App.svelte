@@ -15,6 +15,7 @@
   import ProfileView from "$lib/components/explorer/ProfileView.svelte";
   import SkillDialog from "$lib/components/explorer/SkillDialog.svelte";
   import SkillsView from "$lib/components/explorer/SkillsView.svelte";
+  import StatsView from "$lib/components/explorer/StatsView.svelte";
   import TagMigrationDialog from "$lib/components/explorer/TagMigrationDialog.svelte";
   import TagFilter from "$lib/components/explorer/TagFilter.svelte";
   import Alert from "$lib/components/ui/alert.svelte";
@@ -31,6 +32,7 @@
   import { createRouter } from "$lib/router.svelte";
   import { createMemoriesExplorer } from "$lib/stores/memories-explorer.svelte";
   import { createSkillsStore } from "$lib/stores/skills.svelte";
+  import { createStatsStore } from "$lib/stores/stats.svelte";
   import { createUserProfile } from "$lib/stores/user-profile.svelte";
   import {
     GAP,
@@ -60,6 +62,7 @@
   const explorer = createMemoriesExplorer();
   const profile = createUserProfile();
   const skills = createSkillsStore();
+  const stats = createStatsStore();
 
   let sidebarOpen = $state(false);
   let sidebarCollapsed = $state(readCollapsed());
@@ -71,7 +74,9 @@
       ? i18n.t("tab-project")
       : router.view === "skills"
         ? i18n.t("tab-skills")
-        : i18n.t("tab-profile")
+        : router.view === "stats"
+          ? i18n.t("tab-stats")
+          : i18n.t("tab-profile")
   );
 
   $effect(() => {
@@ -119,6 +124,9 @@
     if (router.view === "skills") {
       void skills.loadSkills();
     }
+    if (router.view === "stats") {
+      void stats.loadStats();
+    }
   });
 
   function onLangToggle() {
@@ -149,6 +157,7 @@
     projectLabel={i18n.t("tab-project")}
     profileLabel={i18n.t("tab-profile")}
     skillsLabel={i18n.t("tab-skills")}
+    statsLabel={i18n.t("tab-stats")}
     {langLabel}
     languageLabel={i18n.t("nav-language")}
     themeLabel={i18n.t("nav-theme")}
@@ -385,6 +394,13 @@
           loading={skills.loading}
           onEdit={skills.openEdit}
           onDelete={skills.deleteSkill}
+        />
+      {:else if router.view === "stats"}
+        <StatsView
+          data={stats.data}
+          loading={stats.loading}
+          error={stats.error}
+          onRefresh={stats.loadStats}
         />
       {:else}
         <ProfileView

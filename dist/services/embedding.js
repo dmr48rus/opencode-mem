@@ -343,7 +343,9 @@ export class EmbeddingService {
             // Local model path
             const { pipeline } = await ensureTransformersLoaded();
             // Explicit config wins; otherwise auto-resolve from model declaration / cache (#393).
-            const dtype = this.spec?.dtype ?? CONFIG.embeddingDtype ?? resolveLocalOnnxDtype(this.modelId);
+            const dtype = this.spec?.dtype ??
+                CONFIG.embeddingDtype ??
+                resolveLocalOnnxDtype(this.modelId);
             if (dtype) {
                 log("Resolved local ONNX dtype for embedding warmup", {
                     model: this.modelId,

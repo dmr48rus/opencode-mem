@@ -11,7 +11,7 @@ import { getOrCreateAuthToken, isAuthorizedApiRequest } from "./auth-token.js";
 import { WebAuth } from "./web-auth.js";
 import { NODE_HTTP_IDLE_TIMEOUT_MS } from "./request-timeouts.js";
 import { checkMcpHost, handleMcpJsonRpc } from "./mcp-endpoint.js";
-import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleRunReindex, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
+import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleTransferProfileIdentity, handleRunReindex, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
 const isBun = typeof globalThis.Bun !== "undefined";
 const MIN_FAILED_TAKEOVERS = 3;
 export function attachNodeDisconnectHandlers(req, res, onDisconnect) {
@@ -639,6 +639,23 @@ export class WebServer {
                 const body = (await req.json());
                 const cascade = body.cascade !== false;
                 const result = await handleBulkDeletePrompts(body.ids || [], cascade);
+                return this.jsonResponse(result);
+            }
+            // Moving a profile to another identity: the master token only. The
+            // identity belongs to the person, not to the machine, and a client key
+            // may not take over somebody else's profile.
+            if (path === "/api/user-profile/transfer" && method === "POST") {
+                if (!isMasterToken(req, this.config.apiToken)) {
+                    return new Response(JSON.stringify({ success: false, error: "Master token required" }), {
+                        status: 403,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                const body = (await req.json().catch(() => ({})));
+                const result = await handleTransferProfileIdentity({
+                    fromUserId: body.fromUserId,
+                    toUserId: body.toUserId,
+                });
                 return this.jsonResponse(result);
             }
             if (path === "/api/user-profile" && method === "GET") {

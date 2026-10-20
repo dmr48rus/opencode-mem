@@ -69,6 +69,22 @@ export declare class UserProfileManager {
     };
     private decayItems;
     deleteProfile(profileId: string): Promise<void>;
+    /**
+     * Move a profile to another identity.
+     *
+     * The profile is the learned part of a person: the preferences, the
+     * patterns, the workflows. It follows the person, not the machine, so a new
+     * PC can take over the identity of the old one. The changelog rows are keyed
+     * by profile id, so they travel with the profile.
+     *
+     * A target that already has a profile is refused: merging two identities
+     * silently is how a profile ends up with two contradictory halves.
+     */
+    transferIdentity(fromUserId: string, toUserId: string): Promise<{
+        moved: number;
+        from: string;
+        to: string;
+    }>;
     getProfileById(profileId: string): Promise<UserProfile | null>;
     getAllActiveProfiles(): Promise<UserProfile[]>;
     private rowToProfile;

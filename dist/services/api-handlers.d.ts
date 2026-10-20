@@ -206,6 +206,17 @@ export declare function handleDeletePrompt(id: string, cascade?: boolean): Promi
 export declare function handleBulkDeletePrompts(ids: string[], cascade?: boolean): Promise<ApiResponse<{
     deleted: number;
 }>>;
+/**
+ * Move a profile to another identity.
+ *
+ * The identity belongs to the person, not to the machine: when the work
+ * moves to another PC, the learned profile has to move with it. The master
+ * token only - a client key may not take over somebody else's identity.
+ */
+export declare function handleTransferProfileIdentity(data: {
+    fromUserId?: string;
+    toUserId?: string;
+}): Promise<ApiResponse<any>>;
 export declare function handleGetUserProfile(userId?: string, raw?: boolean): Promise<ApiResponse<any>>;
 export declare function handlePutUserProfile(data: {
     userId?: string;

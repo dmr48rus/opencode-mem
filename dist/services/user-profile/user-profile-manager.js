@@ -597,6 +597,39 @@ export class UserProfileManager {
             this.saveColdBuffers();
         }
     }
+    /**
+     * Move a profile to another identity.
+     *
+     * The profile is the learned part of a person: the preferences, the
+     * patterns, the workflows. It follows the person, not the machine, so a new
+     * PC can take over the identity of the old one. The changelog rows are keyed
+     * by profile id, so they travel with the profile.
+     *
+     * A target that already has a profile is refused: merging two identities
+     * silently is how a profile ends up with two contradictory halves.
+     */
+    async transferIdentity(fromUserId, toUserId) {
+        const db = await this.ready();
+        const from = String(fromUserId ?? "").trim();
+        const to = String(toUserId ?? "").trim();
+        if (!from || !to)
+            throw new Error("Both identities are required");
+        if (from === to)
+            throw new Error("The identities are the same");
+        const target = await db.get(`SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1`, [to]);
+        if (target) {
+            throw new Error(`The identity "${to}" already has a profile`);
+        }
+        const rows = await db.all(`SELECT id FROM user_profiles WHERE user_id = ?`, [from]);
+        if (rows.length === 0) {
+            throw new Error(`No profile for the identity "${from}"`);
+        }
+        for (const row of rows) {
+            await db.run(`UPDATE user_profiles SET user_id = ? WHERE id = ?`, [to, String(row.id)]);
+        }
+        log("Profile identity transferred", { from, to, rows: rows.length });
+        return { moved: rows.length, from, to };
+    }
     async getProfileById(profileId) {
         const db = await this.ready();
         const row = await db.get(`SELECT * FROM user_profiles WHERE id = ?`, [profileId]);

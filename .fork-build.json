@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking and the fusion itself computed globally over all shards, tokenized corpus cached; query text carried into the shard search; MCP over HTTP on POST /mcp; tier-aware aging sweep (POST /api/sweep) with a reversible tombstone; capture summary: the internal session is created the way the free tier accepts it and falls back to a session message; shadow index for a second embedding model (POST /api/reindex), the reindex follows a model swap, in replace mode the shadow takes the seat of the whole model in charge, in the global fusion too, and the replaced model no longer embeds the query",
-  "commit": "6c61a2d",
-  "builtAt": "2026-10-20T10:00:09.5240125+03:00",
+  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking and the fusion itself computed globally over all shards, tokenized corpus cached; query text carried into the shard search; MCP over HTTP on POST /mcp; tier-aware aging sweep (POST /api/sweep) with a reversible tombstone; capture summary: the internal session is created the way the free tier accepts it and falls back to a session message; shadow index for a second embedding model (POST /api/reindex), the reindex follows a model swap, in replace mode the shadow takes the seat of the whole model in charge, in the global fusion too, the replaced model no longer embeds the query, and the candidates come from the shadow",
+  "commit": "f95ecf9",
+  "builtAt": "2026-10-20T10:25:07.6916993+03:00",
   "distFiles": 306
 }

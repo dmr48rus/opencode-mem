@@ -1,5 +1,14 @@
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0:0:0:0:0:0:0:1"]);
 
+import { resolveClientScope } from "./client-keys.js";
+
+function unauthorized(): Response {
+  return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
+    status: 401,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(host.trim().toLowerCase());
 }
@@ -16,20 +25,40 @@ export function assertWebServerNetworkAuth(
   }
 }
 
-export function authorizeApiRequest(req: Request, apiToken?: string): Response | null {
-  if (!apiToken) return null;
-
+export function presentedApiToken(req: Request): string | null {
   const header = req.headers.get("authorization");
   const bearer = header?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
   const alt = req.headers.get("x-opencode-mem-token")?.trim();
-  const token = bearer || alt;
+  return bearer || alt || null;
+}
 
-  if (token && token === apiToken) {
-    return null;
+export function isMasterToken(req: Request, apiToken?: string): boolean {
+  if (!apiToken) return false;
+  const token = presentedApiToken(req);
+  return token === apiToken;
+}
+
+/**
+ * Authorize an API request.
+ *
+ * The master token is the administrator's and keeps full access. A client key
+ * carries a scope: a read-only key may read, and is refused anything that
+ * changes the store - including the MCP endpoint, whose tools can write.
+ */
+export function authorizeApiRequest(req: Request, apiToken?: string): Response | null {
+  if (!apiToken) return null;
+
+  const token = presentedApiToken(req);
+  if (!token) return unauthorized();
+  if (token === apiToken) return null;
+
+  const scope = resolveClientScope(token);
+  if (scope === null) return unauthorized();
+  if (scope === "read" && req.method !== "GET" && req.method !== "HEAD") {
+    return new Response(JSON.stringify({ success: false, error: "This key is read-only" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
   }
-
-  return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
-    status: 401,
-    headers: { "Content-Type": "application/json" },
-  });
+  return null;
 }

@@ -31,6 +31,9 @@ case "$PRESET" in
   small) REPO="unsloth/Qwen3-0.6B-GGUF"; FILE="Qwen3-0.6B-Q4_K_M.gguf" ;;
   mid)   REPO="unsloth/Qwen3-1.7B-GGUF"; FILE="Qwen3-1.7B-Q4_K_M.gguf" ;;
   big)   REPO="unsloth/Qwen3-4B-GGUF";   FILE="Qwen3-4B-Q4_K_M.gguf" ;;
+  # Не-Qwen кандидат: Gemma 3 умеет отвечать сразу, без режима размышления,
+  # поэтому ответ не остаётся пустым из-за съеденного лимита.
+  gemma) REPO="unsloth/gemma-3-1b-it-GGUF"; FILE="gemma-3-1b-it-Q4_K_M.gguf" ;;
   *)     REPO="$PRESET"; FILE="${2:-}" ;;
 esac
 

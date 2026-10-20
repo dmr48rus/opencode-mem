@@ -182,6 +182,17 @@ export declare function handleRunCleanup(): Promise<ApiResponse<{
     userCount: number;
     projectCount: number;
 }>>;
+/**
+ * Mark the near-duplicates instead of deleting them.
+ *
+ * A dry run is the default: the report says what would be marked, and the
+ * store is only touched when the caller says so.
+ */
+export declare function handleMarkDuplicates(data?: {
+    dryRun?: boolean;
+    coldDays?: number;
+    limit?: number;
+}): Promise<ApiResponse<any>>;
 export declare function handleRunDeduplication(): Promise<ApiResponse<{
     exactDuplicatesDeleted: number;
     nearDuplicateGroups: any[];

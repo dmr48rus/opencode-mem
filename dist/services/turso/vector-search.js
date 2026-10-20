@@ -559,6 +559,20 @@ export class TursoVectorSearch {
             warnings,
         };
     }
+    /**
+     * Mark a record as superseded by another one.
+     *
+     * The record stays: a duplicate that turns out not to be one is still a
+     * record the store can no longer produce if it was deleted. Clearing
+     * `superseded_by` brings it back.
+     */
+    async markSuperseded(db, memoryId, supersededBy, confidence) {
+        await db.run(`UPDATE memories SET superseded_by = ?, confidence = ? WHERE id = ?`, [
+            supersededBy,
+            confidence,
+            memoryId,
+        ]);
+    }
     async deleteVector(db, memoryId) {
         await db.run(`DELETE FROM memories WHERE id = ?`, [memoryId]);
         globalLexicalCorpus = null;

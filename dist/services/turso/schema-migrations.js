@@ -142,6 +142,14 @@ export function memoryShardMigrations(dimensions) {
                 { sql: `ALTER TABLE memories ADD COLUMN shadow_model TEXT` },
             ],
         },
+        {
+            version: 5,
+            description: "Soft supersede: a duplicate is marked instead of deleted, so the original stays and the mark can be cleared",
+            statements: [
+                { sql: `ALTER TABLE memories ADD COLUMN superseded_by TEXT` },
+                { sql: `ALTER TABLE memories ADD COLUMN confidence REAL` },
+            ],
+        },
     ];
 }
 export const METADATA_DB_MIGRATIONS = [

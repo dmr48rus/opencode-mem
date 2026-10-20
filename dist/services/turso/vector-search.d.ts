@@ -74,6 +74,14 @@ export declare class TursoVectorSearch {
         results: SearchResult[];
         warnings: string[];
     }>;
+    /**
+     * Mark a record as superseded by another one.
+     *
+     * The record stays: a duplicate that turns out not to be one is still a
+     * record the store can no longer produce if it was deleted. Clearing
+     * `superseded_by` brings it back.
+     */
+    markSuperseded(db: TursoDb, memoryId: string, supersededBy: string, confidence: number): Promise<void>;
     deleteVector(db: TursoDb, memoryId: string): Promise<void>;
     updateVector(db: TursoDb, memoryId: string, vector: Float32Array, tagsVector?: Float32Array): Promise<void>;
     listMemories(db: TursoDb, containerTag: string, limit: number, tagFilters?: string[]): Promise<Record<string, unknown>[]>;

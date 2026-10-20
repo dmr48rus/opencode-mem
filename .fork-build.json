@@ -1,7 +1,7 @@
 {
   "branch": "patched/2.31.0",
-  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking and the fusion itself computed globally over all shards, tokenized corpus cached; query text carried into the shard search; MCP over HTTP on POST /mcp; tier-aware aging sweep (POST /api/sweep) with a reversible tombstone; capture summary: the internal session is created the way the free tier accepts it and falls back to a session message; shadow index for a second embedding model (POST /api/reindex); per-client keys with a scope; a profile identity can be moved to another machine (POST /api/user-profile/transfer)",
-  "commit": "6ff85d5",
-  "builtAt": "2026-10-20T10:48:43.6047718+03:00",
-  "distFiles": 306
+  "note": "remote store; skills registered with the host, ownership-scoped; three upstream fixes ported from 2.31.1-2.31.3; BM25 lexical channel and rank fusion (OPENCODE_MEM_RRF=1), lexical ranking and the fusion itself computed globally over all shards, tokenized corpus cached; query text carried into the shard search; MCP over HTTP on POST /mcp; tier-aware aging sweep (POST /api/sweep) with a reversible tombstone; capture summary: the internal session is created the way the free tier accepts it and falls back to a session message; shadow index for a second embedding model (POST /api/reindex); per-client keys with a scope; a profile identity can be moved to another machine (POST /api/user-profile/transfer); soft deduplication (POST /api/deduplicate/mark) marks the duplicates and keeps the originals",
+  "commit": "a5743c6",
+  "builtAt": "2026-10-20T11:11:19.2284782+03:00",
+  "distFiles": 309
 }

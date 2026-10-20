@@ -1334,6 +1334,30 @@ async function resolveProfileUserId(explicitUserId?: string): Promise<string> {
   return "unknown";
 }
 
+/**
+ * Move a profile to another identity.
+ *
+ * The identity belongs to the person, not to the machine: when the work
+ * moves to another PC, the learned profile has to move with it. The master
+ * token only - a client key may not take over somebody else's identity.
+ */
+export async function handleTransferProfileIdentity(data: {
+  fromUserId?: string;
+  toUserId?: string;
+}): Promise<ApiResponse<any>> {
+  try {
+    const { userProfileManager } = await import("./user-profile/user-profile-manager.js");
+    const result = await userProfileManager.transferIdentity(
+      String(data?.fromUserId ?? ""),
+      String(data?.toUserId ?? "")
+    );
+    return { success: true, data: result };
+  } catch (error) {
+    log("handleTransferProfileIdentity: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
+}
+
 export async function handleGetUserProfile(
   userId?: string,
   raw = false

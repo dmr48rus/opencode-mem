@@ -20,6 +20,7 @@ import {
   handleUpdateMemory,
   handleSearch,
   handleSnapshot,
+  handleTransferProfileIdentity,
   handleRunReindex,
   handleRunSweep,
   handleRememberByProject,
@@ -807,6 +808,24 @@ export class WebServer {
         const body = (await req.json()) as any;
         const cascade = body.cascade !== false;
         const result = await handleBulkDeletePrompts(body.ids || [], cascade);
+        return this.jsonResponse(result);
+      }
+
+      // Moving a profile to another identity: the master token only. The
+      // identity belongs to the person, not to the machine, and a client key
+      // may not take over somebody else's profile.
+      if (path === "/api/user-profile/transfer" && method === "POST") {
+        if (!isMasterToken(req, this.config.apiToken)) {
+          return new Response(JSON.stringify({ success: false, error: "Master token required" }), {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleTransferProfileIdentity({
+          fromUserId: body.fromUserId,
+          toUserId: body.toUserId,
+        });
         return this.jsonResponse(result);
       }
 

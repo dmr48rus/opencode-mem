@@ -1111,7 +1111,14 @@ export async function handleRunSweep(data?: {
       limit: data?.limit,
       restore: data?.restore === true,
     });
-    return { success: true, data: report };
+    // The profile is a derivate of the records: an item whose only support was
+    // forgotten goes with it, and an item whose support came back comes back.
+    let profile = null;
+    if (!report.dryRun && (report.aged > 0 || report.restored > 0)) {
+      const { forgetUnsupportedProfileItems } = await import("./memory-hygiene.js");
+      profile = await forgetUnsupportedProfileItems({ dryRun: false });
+    }
+    return { success: true, data: { ...report, profile } };
   } catch (error) {
     log("handleRunSweep: error", { error: String(error) });
     return { success: false, error: String(error) };
@@ -1262,6 +1269,87 @@ export async function handleMarkDuplicates(data?: {
     return { success: true, data: report };
   } catch (error) {
     log("handleMarkDuplicates: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Fold the marked duplicates into their canonical copies.
+ *
+ * The canonical copy stays intact and the fold can be undone: a compacted
+ * record keeps its text and its vector, it only stops surfacing.
+ */
+export async function handleCompactDuplicates(data?: {
+  dryRun?: boolean;
+  coldDays?: number;
+  limit?: number;
+  restore?: boolean;
+}): Promise<ApiResponse<any>> {
+  try {
+    const { compactDuplicates } = await import("./memory-hygiene.js");
+    const report = await compactDuplicates({
+      dryRun: data?.dryRun,
+      coldDays: data?.coldDays,
+      limit: data?.limit,
+      restore: data?.restore,
+    });
+    return { success: true, data: report };
+  } catch (error) {
+    log("handleCompactDuplicates: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Flag the records that contradict each other. Nothing is resolved: both
+ * records stay where they are, and the owner decides which one wins.
+ */
+export async function handleScanConflicts(data?: {
+  dryRun?: boolean;
+  limit?: number;
+}): Promise<ApiResponse<any>> {
+  try {
+    const { scanContradictions } = await import("./memory-hygiene.js");
+    const report = await scanContradictions({
+      dryRun: data?.dryRun,
+      limit: data?.limit,
+    });
+    return { success: true, data: report };
+  } catch (error) {
+    log("handleScanConflicts: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
+}
+
+/** Clear the conflict flags of one record: the flag is a note, and notes are lifted. */
+export async function handleClearConflicts(data?: {
+  memoryId?: string;
+}): Promise<ApiResponse<any>> {
+  try {
+    const memoryId = String(data?.memoryId ?? "").trim();
+    if (!memoryId) return { success: false, error: "memoryId is required" };
+    const { tursoShardManager } = await import("./turso/shard-manager.js");
+    const { tursoConnectionManager } = await import("./turso/connection-manager.js");
+    const shards = [
+      ...(await tursoShardManager.getAllShards("user", "")),
+      ...(await tursoShardManager.getAllShards("project", "")),
+    ];
+    let cleared = 0;
+    for (const shard of shards) {
+      const db = await tursoConnectionManager.getConnection(shard.dbPath);
+      await tursoShardManager.ensureShardSchema(db);
+      const result = await db.run(
+        `DELETE FROM memory_conflicts WHERE memory_id = ? OR other_id = ?`,
+        [memoryId, memoryId]
+      );
+      cleared +=
+        typeof result === "number"
+          ? result
+          : Number((result as { rowsAffected?: number })?.rowsAffected ?? 0);
+    }
+    return { success: true, data: { memoryId, cleared } };
+  } catch (error) {
+    log("handleClearConflicts: error", { error: String(error) });
     return { success: false, error: String(error) };
   }
 }

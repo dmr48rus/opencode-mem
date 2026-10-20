@@ -166,6 +166,29 @@ export function memoryShardMigrations(dimensions: number): SchemaMigration[] {
         { sql: `ALTER TABLE memories ADD COLUMN confidence REAL` },
       ],
     },
+    {
+      version: 6,
+      description:
+        "Compaction of the marked duplicates and the conflict flags: both are reversible markers, neither one resolves anything on its own",
+      statements: [
+        { sql: `ALTER TABLE memories ADD COLUMN compacted_into TEXT` },
+        { sql: `CREATE INDEX IF NOT EXISTS idx_compacted_into ON memories(compacted_into)` },
+        {
+          sql: `
+            CREATE TABLE IF NOT EXISTS memory_conflicts (
+              id TEXT PRIMARY KEY,
+              memory_id TEXT NOT NULL,
+              other_id TEXT NOT NULL,
+              kind TEXT,
+              confidence REAL,
+              reason TEXT,
+              created_at INTEGER NOT NULL,
+              UNIQUE(memory_id, other_id)
+            )
+          `,
+        },
+      ],
+    },
   ];
 }
 

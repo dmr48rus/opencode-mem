@@ -21,6 +21,9 @@ import {
   handleSearch,
   handleSnapshot,
   handleMarkDuplicates,
+  handleCompactDuplicates,
+  handleScanConflicts,
+  handleClearConflicts,
   handleTransferProfileIdentity,
   handleRunReindex,
   handleRunSweep,
@@ -775,6 +778,36 @@ export class WebServer {
           coldDays: body?.coldDays,
           limit: body?.limit,
         });
+        return this.jsonResponse(result);
+      }
+
+      // The compaction: a copy of a cold cluster is folded into its canonical
+      // copy and stops surfacing. The canonical copy stays where it is, and the
+      // fold is undone by restoring.
+      if (path === "/api/compact" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleCompactDuplicates({
+          dryRun: body?.dryRun,
+          coldDays: body?.coldDays,
+          limit: body?.limit,
+          restore: body?.restore === true,
+        });
+        return this.jsonResponse(result);
+      }
+
+      // The contradictions are flagged, never resolved: both records stay.
+      if (path === "/api/conflicts/scan" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleScanConflicts({
+          dryRun: body?.dryRun,
+          limit: body?.limit,
+        });
+        return this.jsonResponse(result);
+      }
+
+      if (path === "/api/conflicts/clear" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleClearConflicts({ memoryId: body?.memoryId });
         return this.jsonResponse(result);
       }
 

@@ -281,10 +281,14 @@ export class TursoVectorSearch {
                     score: component.shadowSim,
                 })));
                 if (shadowMode === "replace") {
-                    // The shadow takes the seat of the content channel: the model in
-                    // charge is the noisy one on this corpus, and a second vote from it
-                    // would dilute the channel that works.
+                    // The shadow takes the seat of the model in charge - the content
+                    // channel AND the tags channel, whose vectors belong to that model
+                    // too. A leftover channel from the old model would dilute the one
+                    // that works, and measured on the live corpus it did exactly that:
+                    // the shadow reordered the results but did not move a single hit
+                    // into the top ten.
                     channels[0] = shadowRanks;
+                    channels.splice(1, 1);
                 }
                 else {
                     channels.push(shadowRanks);

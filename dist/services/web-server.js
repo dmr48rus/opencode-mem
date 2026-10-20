@@ -5,7 +5,8 @@ import { join, dirname, extname, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
 import { corsPreflightResponse, disallowedCorsResponse, isAllowedBrowserOrigin } from "./cors.js";
-import { assertWebServerNetworkAuth, authorizeApiRequest } from "./web-api-auth.js";
+import { assertWebServerNetworkAuth, authorizeApiRequest, isMasterToken } from "./web-api-auth.js";
+import { issueClientKey, listClientKeys, revokeClientKey } from "./client-keys.js";
 import { getOrCreateAuthToken, isAuthorizedApiRequest } from "./auth-token.js";
 import { WebAuth } from "./web-auth.js";
 import { NODE_HTTP_IDLE_TIMEOUT_MS } from "./request-timeouts.js";
@@ -527,6 +528,47 @@ export class WebServer {
             if (path === "/api/cleanup" && method === "POST") {
                 const result = await handleRunCleanup();
                 return this.jsonResponse(result);
+            }
+            // Per-client keys: issued and revoked by the master token only. A key
+            // that is issued for one machine can be revoked without touching the
+            // others, and a read-only key cannot change the store.
+            if (path === "/api/keys" && method === "GET") {
+                if (!isMasterToken(req, this.config.apiToken)) {
+                    return new Response(JSON.stringify({ success: false, error: "Master token required" }), {
+                        status: 403,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                return this.jsonResponse({ success: true, data: listClientKeys() });
+            }
+            if (path === "/api/keys" && method === "POST") {
+                if (!isMasterToken(req, this.config.apiToken)) {
+                    return new Response(JSON.stringify({ success: false, error: "Master token required" }), {
+                        status: 403,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                const body = (await req.json().catch(() => ({})));
+                const label = String(body.label || "client").slice(0, 80);
+                const issued = issueClientKey({
+                    label,
+                    clientId: String(body.clientId || label).slice(0, 120),
+                    scope: body.scope === "read" ? "read" : "write",
+                });
+                // The plaintext is in this answer and nowhere else: only its hash is
+                // stored, so a lost key is replaced, not recovered.
+                return this.jsonResponse({ success: true, data: issued });
+            }
+            if (path.startsWith("/api/keys/") && method === "DELETE") {
+                if (!isMasterToken(req, this.config.apiToken)) {
+                    return new Response(JSON.stringify({ success: false, error: "Master token required" }), {
+                        status: 403,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                const id = path.slice("/api/keys/".length);
+                const revoked = revokeClientKey(id);
+                return this.jsonResponse({ success: revoked, data: { id, revoked } });
             }
             // The shadow index: fill it in steps and switch it on or off without a
             // deploy - the mode is stored with the data.

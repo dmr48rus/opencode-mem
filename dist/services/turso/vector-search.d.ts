@@ -19,7 +19,7 @@ export declare function rrfK(): number;
  * word-overlap questions and 15/28 on paraphrased ones, while the same fusion
  * over global ranks gives 20/20 and 19/28.
  */
-export declare function fuseGlobalRanks(results: SearchResult[], lexicalRanks: Map<string, number>, k: number): void;
+export declare function fuseGlobalRanks(results: SearchResult[], lexicalRanks: Map<string, number>, k: number, shadowMode?: ShadowMode): void;
 /**
  * How the shadow (second-model) index takes part in the search.
  *

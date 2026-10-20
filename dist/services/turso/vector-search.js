@@ -87,17 +87,38 @@ const INSERT_WITHOUT_TAGS = `
  * word-overlap questions and 15/28 on paraphrased ones, while the same fusion
  * over global ranks gives 20/20 and 19/28.
  */
-export function fuseGlobalRanks(results, lexicalRanks, k) {
-    const contentRanks = rankByScore(results.map((result) => ({ id: result.id, score: result.contentSim ?? 0 })));
+export function fuseGlobalRanks(results, lexicalRanks, k, shadowMode = "off") {
+    // The shadow replaces the model in charge, and the replacement has to reach
+    // this fusion too: measured on the live corpus, the shadow was counted
+    // inside the shard and then overwritten here by the old model's distance, so
+    // the whole switch had no effect (34/48 against 36/48).
+    const useShadow = shadowMode !== "off";
+    const contentRanks = rankByScore(results.map((result) => ({
+        id: result.id,
+        score: useShadow ? (result.shadowSim ?? 0) : (result.contentSim ?? 0),
+    })));
     const tagRanks = rankByScore(results.map((result) => ({ id: result.id, score: result.tagsSim ?? 0 })));
+    const shadowRanks = useShadow
+        ? rankByScore(results.map((result) => ({ id: result.id, score: result.shadowSim ?? 0 })))
+        : new Map();
     for (const result of results) {
         let score = 0;
         const contentRank = contentRanks.get(result.id);
         if (contentRank)
             score += 1 / (k + contentRank);
-        const tagRank = tagRanks.get(result.id);
-        if (tagRank)
-            score += 1 / (k + tagRank);
+        if (shadowMode === "channel") {
+            const shadowRank = shadowRanks.get(result.id);
+            if (shadowRank)
+                score += 1 / (k + shadowRank);
+            const tagRank = tagRanks.get(result.id);
+            if (tagRank)
+                score += 1 / (k + tagRank);
+        }
+        else if (shadowMode !== "replace") {
+            const tagRank = tagRanks.get(result.id);
+            if (tagRank)
+                score += 1 / (k + tagRank);
+        }
         const lexicalRank = lexicalRanks.get(result.id);
         if (lexicalRank)
             score += 1 / (k + lexicalRank);
@@ -333,6 +354,7 @@ export class TursoVectorSearch {
                 // redone over GLOBAL ranks once the shards are merged (fuseGlobalRanks).
                 contentSim: component.contentSim,
                 tagsSim: component.finalTagsSim,
+                shadowSim: component.shadowSim,
                 createdAt: Number(row.created_at),
                 tags: component.memoryTagsStr ? component.memoryTagsStr.split(",") : [],
                 metadata: parseMetadata(row.metadata),

@@ -173,6 +173,24 @@ describe("store hygiene", () => {
       createdAt: now + 3000,
       updatedAt: now + 3000,
     } as any);
+    // Two log lines differ in their numbers for a reason that has nothing to
+    // do with contradicting each other: the timestamps alone do it.
+    await tursoVectorSearch.insertVector(db, {
+      id: "m_log_a",
+      content: "сборка 12.10 2026 15:30 порт 9119 шлюз 18800 записи 1516",
+      vector: vectorA(),
+      containerTag,
+      createdAt: now + 4000,
+      updatedAt: now + 4000,
+    } as any);
+    await tursoVectorSearch.insertVector(db, {
+      id: "m_log_b",
+      content: "сборка 13.10 2026 16:30 порт 9119 шлюз 18801 записи 1517",
+      vector: vectorB(),
+      containerTag,
+      createdAt: now + 5000,
+      updatedAt: now + 5000,
+    } as any);
 
     // A dry run reports and changes nothing.
     const dry = await scanContradictions({ dryRun: true });
@@ -190,7 +208,7 @@ describe("store hygiene", () => {
     expect(kinds).toEqual(["polarity", "value"]);
     // Both records of a pair stay in the store: a flag resolves nothing.
     const alive = await db.all(`SELECT id FROM memories`);
-    expect(alive.length).toBe(4);
+    expect(alive.length).toBe(6);
 
     // The flag is a note, and notes are lifted.
     const { handleClearConflicts } = await import("../src/services/api-handlers.js");

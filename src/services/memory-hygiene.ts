@@ -174,13 +174,24 @@ function detectConflict(
   // Two records only contradict each other when they are about the same thing.
   if (confidence < 0.5) return null;
 
-  if (a.numbers.length > 0 && b.numbers.length > 0) {
+  // A claim states a value or two. A record with a dozen numbers is a log, and
+  // two logs differ in their numbers for reasons that have nothing to do with
+  // contradicting each other - timestamps alone make every pair of them a
+  // "conflict".
+  if (
+    a.numbers.length > 0 &&
+    b.numbers.length > 0 &&
+    a.numbers.length <= 3 &&
+    b.numbers.length <= 3
+  ) {
     const aSet = new Set(a.numbers);
     const bSet = new Set(b.numbers);
     // One value set inside the other is an elaboration, not a contradiction.
     const aInside = [...aSet].every((number) => bSet.has(number));
     const bInside = [...bSet].every((number) => aSet.has(number));
-    if (!aInside && !bInside) {
+    const shared = [...aSet].filter((number) => bSet.has(number)).length;
+    const differing = aSet.size + bSet.size - 2 * shared;
+    if (!aInside && !bInside && differing <= 2) {
       return {
         kind: "value",
         confidence,

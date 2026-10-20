@@ -1214,6 +1214,31 @@ export async function handleRunCleanup(): Promise<
   }
 }
 
+/**
+ * Mark the near-duplicates instead of deleting them.
+ *
+ * A dry run is the default: the report says what would be marked, and the
+ * store is only touched when the caller says so.
+ */
+export async function handleMarkDuplicates(data?: {
+  dryRun?: boolean;
+  coldDays?: number;
+  limit?: number;
+}): Promise<ApiResponse<any>> {
+  try {
+    const { markNearDuplicates } = await import("./memory-dedup.js");
+    const report = await markNearDuplicates({
+      dryRun: data?.dryRun,
+      coldDays: data?.coldDays,
+      limit: data?.limit,
+    });
+    return { success: true, data: report };
+  } catch (error) {
+    log("handleMarkDuplicates: error", { error: String(error) });
+    return { success: false, error: String(error) };
+  }
+}
+
 export async function handleRunDeduplication(): Promise<
   ApiResponse<{ exactDuplicatesDeleted: number; nearDuplicateGroups: any[] }>
 > {

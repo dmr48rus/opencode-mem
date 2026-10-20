@@ -20,6 +20,7 @@ import {
   handleUpdateMemory,
   handleSearch,
   handleSnapshot,
+  handleMarkDuplicates,
   handleTransferProfileIdentity,
   handleRunReindex,
   handleRunSweep,
@@ -758,6 +759,18 @@ export class WebServer {
 
       if (path === "/api/deduplicate" && method === "POST") {
         const result = await handleRunDeduplication();
+        return this.jsonResponse(result);
+      }
+
+      // The soft pass: mark the duplicates, keep the originals. A dry run is
+      // the default - the report says what would be marked.
+      if (path === "/api/deduplicate/mark" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleMarkDuplicates({
+          dryRun: body?.dryRun,
+          coldDays: body?.coldDays,
+          limit: body?.limit,
+        });
         return this.jsonResponse(result);
       }
 

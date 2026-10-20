@@ -91,8 +91,12 @@ export function classifyTier(type) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 export async function runMemorySweep(options = {}) {
     await ensureTursoReady();
-    const episodicDays = options.episodicDays ?? 30;
-    const proceduralDays = options.proceduralDays ?? 180;
+    // The thresholds are deliberately conservative: the store was young when
+    // they were set (a corpus of five weeks would have lost most of its
+    // episodic records to a thirty-day threshold). Forgetting is a decision
+    // about what the store still needs, not a way to shrink it.
+    const episodicDays = options.episodicDays ?? 90;
+    const proceduralDays = options.proceduralDays ?? 365;
     const dryRun = options.dryRun !== false;
     const limit = Math.max(1, Math.min(10000, options.limit ?? 1000));
     const shards = [

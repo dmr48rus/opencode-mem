@@ -36,7 +36,7 @@ export async function markNearDuplicates(options = {}) {
     ];
     let marked = 0;
     let skippedWarm = 0;
-    let skippedAlreadyMarked = 0;
+    const skippedAlreadyMarked = 0;
     let groups = 0;
     const samples = [];
     for (const shard of shards) {

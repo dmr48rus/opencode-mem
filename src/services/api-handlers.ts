@@ -649,11 +649,9 @@ export async function handleSearch(
   try {
     if (!query) return { success: false, error: "query is required" };
     await ensureTursoReady();
-    await embeddingService.warmup();
-    const queryVector = await embeddingService.embedWithTimeout(query, { task: "query" });
-    // The shadow model, when it is in play: its own query vector and its own
-    // channel. The mode lives with the data, not in the config, so the switch
-    // survives a restart without another deploy.
+    // The shadow mode is read FIRST: in "replace" mode the model in charge
+    // does not answer at all, so embedding the query with it would be work
+    // whose result nobody reads (measured: about a third of the extra latency).
     let shadowMode: ShadowMode = "off";
     let shadowQueryVector: Float32Array | undefined;
     try {
@@ -670,6 +668,20 @@ export async function handleSearch(
       log("Shadow channel unavailable; continuing without it", { error: String(error) });
       shadowMode = "off";
       shadowQueryVector = undefined;
+    }
+    // "replace" without a shadow vector would leave the search with neither
+    // the old model nor the new one. The mode is stored with the data, so a
+    // config that no longer names a shadow model must not be able to
+    // silently blind the store.
+    if (shadowMode === "replace" && !shadowQueryVector) {
+      log("Shadow mode is replace but no shadow vector is available; using the model in charge");
+      shadowMode = "off";
+    }
+
+    let queryVector: Float32Array | undefined;
+    if (shadowMode !== "replace") {
+      await embeddingService.warmup();
+      queryVector = await embeddingService.embedWithTimeout(query, { task: "query" });
     }
     const memoryResults: any[] = [];
     let promptResults: any[] = [];

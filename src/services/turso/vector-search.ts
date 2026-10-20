@@ -214,7 +214,7 @@ export class TursoVectorSearch {
   }
   async searchInShard(
     shard: ShardInfo,
-    queryVector: Float32Array,
+    queryVector: Float32Array | undefined,
     containerTag: string,
     limit: number,
     queryText?: string,
@@ -224,7 +224,9 @@ export class TursoVectorSearch {
   ): Promise<SearchResult[]> {
     const db = await tursoConnectionManager.getConnection(shard.dbPath);
     await this.prepareShardDb(db);
-    const queryJson = vectorToJson(queryVector);
+    // Empty when the model in charge is replaced: its distances are not
+    // computed at all, so the query vector is not needed.
+    const queryJson = queryVector ? vectorToJson(queryVector) : "";
     // Exact cosine already returns the best-k rows; over-fetch a little so
     // content+tags+keyword candidates can merge before hybrid re-rank.
     const k = Math.max(limit * 2, 32);
@@ -273,17 +275,29 @@ export class TursoVectorSearch {
                ELSE NULL END AS shadow_dist,`
       : "";
     const shadowJson = shadowActive ? vectorToJson(shadowQueryVector as Float32Array) : null;
+    // In "replace" mode the channels of the model in charge are not used at
+    // all, so their distances are not computed - and the query does not have
+    // to be embedded with that model either (measured: that second embedding
+    // was about a third of the extra latency).
+    const legacyOff = shadowMode === "replace";
+    const contentColumn = legacyOff
+      ? "NULL AS content_dist,"
+      : "vector_distance_cos(vector, vector32(?)) AS content_dist,";
+    const tagsColumn = legacyOff
+      ? "NULL AS tags_dist"
+      : `CASE WHEN tags_vector IS NOT NULL
+               THEN vector_distance_cos(tags_vector, vector32(?))
+               ELSE NULL END AS tags_dist`;
+    const legacyParam = legacyOff ? [] : [queryJson];
     const rows = await db.all(
       containerTag === ""
         ? `
       SELECT id, content, tags, created_at, metadata, container_tag,
              display_name, user_name, user_email, project_path, project_name,
              git_repo_url, is_pinned, session_id,
-             vector_distance_cos(vector, vector32(?)) AS content_dist,
+             ${contentColumn}
              ${shadowColumn}
-             CASE WHEN tags_vector IS NOT NULL
-               THEN vector_distance_cos(tags_vector, vector32(?))
-               ELSE NULL END AS tags_dist
+             ${tagsColumn}
       FROM memories
       WHERE id IN (${placeholders}) AND aged_at IS NULL
     `
@@ -291,17 +305,21 @@ export class TursoVectorSearch {
       SELECT id, content, tags, created_at, metadata, container_tag,
              display_name, user_name, user_email, project_path, project_name,
              git_repo_url, is_pinned, session_id,
-             vector_distance_cos(vector, vector32(?)) AS content_dist,
+             ${contentColumn}
              ${shadowColumn}
-             CASE WHEN tags_vector IS NOT NULL
-               THEN vector_distance_cos(tags_vector, vector32(?))
-               ELSE NULL END AS tags_dist
+             ${tagsColumn}
       FROM memories
       WHERE id IN (${placeholders}) AND container_tag = ? AND aged_at IS NULL
     `,
       containerTag === ""
-        ? [queryJson, ...(shadowActive ? [shadowJson] : []), queryJson, ...ids]
-        : [queryJson, ...(shadowActive ? [shadowJson] : []), queryJson, ...ids, containerTag]
+        ? [...legacyParam, ...(shadowActive ? [shadowJson] : []), ...legacyParam, ...ids]
+        : [
+            ...legacyParam,
+            ...(shadowActive ? [shadowJson] : []),
+            ...legacyParam,
+            ...ids,
+            containerTag,
+          ]
     );
 
     const components = rows.map((row: Record<string, unknown>) => {

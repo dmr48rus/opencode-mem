@@ -506,7 +506,11 @@ export class WebServer {
                 return this.jsonResponse(result);
             }
             if (path === "/api/stats" && method === "GET") {
-                const result = await handleStats();
+                // With an API token, probe authenticated /api/stats?probe=1 so that
+                // ownership is proven cheaply: the auth already ran, and walking the
+                // shards or scanning the logs does not belong in a liveness check.
+                const probe = url.searchParams.get("probe") === "1";
+                const result = await handleStats({ probe });
                 return this.jsonResponse(result);
             }
             if (path.match(/^\/api\/memories\/[^/]+\/pin$/) && method === "POST") {

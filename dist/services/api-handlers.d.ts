@@ -1,3 +1,4 @@
+import { collectDailyStats, collectProfileStats, collectShardStats, type CollectDailyStatsOptions } from "./stats-service.js";
 import type { ShadowMode } from "./turso/vector-search.js";
 import type { MemoryType } from "../types/index.js";
 import type { UserProfileData } from "./user-profile/types.js";
@@ -162,13 +163,20 @@ export declare function handleRunSweep(data?: {
     limit?: number;
     restore?: boolean;
 }): Promise<ApiResponse<any>>;
-export declare function handleStats(): Promise<ApiResponse<{
+export declare function handleStats(options?: Pick<CollectDailyStatsOptions, "logDir" | "now"> & {
+    probe?: boolean;
+}): Promise<ApiResponse<{
     total: number;
     byScope: {
         user: number;
         project: number;
     };
     byType: Record<string, number>;
+    generatedAt: string;
+    shards: Awaited<ReturnType<typeof collectShardStats>>["shards"];
+    profile: Awaited<ReturnType<typeof collectProfileStats>>;
+    daily: ReturnType<typeof collectDailyStats>;
+    dailyError?: string;
     memoryMb?: {
         rss: number;
         heapUsed: number;

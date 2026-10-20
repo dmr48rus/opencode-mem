@@ -50,6 +50,22 @@ interface OpenCodeMemConfig {
    */
   embeddingDocumentPrefix?: string;
   /**
+   * A second embedding model, written to a parallel ("shadow") column.
+   *
+   * The model in charge keeps serving the store while the shadow index is
+   * filled, so switching models never leaves the store unreadable. Measured
+   * 20.10.2026 on the live corpus: a multilingual model takes the semantic
+   * slice from 16/28 to 21/28 (offline, together with the lexical channel),
+   * while the current English-only model adds nothing over that channel.
+   */
+  embeddingShadowModel?: string;
+  /** Vector width of the shadow model. Default: the model's own preset. */
+  embeddingShadowDimensions?: number;
+  /** Prefix for query-task embeddings of the shadow model. */
+  embeddingShadowQueryPrefix?: string;
+  /** Prefix for document-task embeddings of the shadow model. */
+  embeddingShadowDocumentPrefix?: string;
+  /**
    * Optional dtype for the local ONNX pipeline (e.g. `"q8"`, `"fp32"`).
    * When set, passed to `pipeline({ dtype })` and outranks auto-detection.
    */
@@ -198,6 +214,10 @@ const DEFAULTS: Required<
     | "embeddingApiKey"
     | "embeddingQueryPrefix"
     | "embeddingDocumentPrefix"
+    | "embeddingShadowModel"
+    | "embeddingShadowDimensions"
+    | "embeddingShadowQueryPrefix"
+    | "embeddingShadowDocumentPrefix"
     | "embeddingDtype"
     | "memoryModel"
     | "memoryApiUrl"
@@ -224,6 +244,10 @@ const DEFAULTS: Required<
   embeddingApiKey?: string;
   embeddingQueryPrefix?: string;
   embeddingDocumentPrefix?: string;
+  embeddingShadowModel?: string;
+  embeddingShadowDimensions?: number;
+  embeddingShadowQueryPrefix?: string;
+  embeddingShadowDocumentPrefix?: string;
   embeddingDtype?: string;
   memoryModel?: string;
   memoryApiUrl?: string;
@@ -1056,6 +1080,10 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     embeddingPooling,
     embeddingQueryPrefix,
     embeddingDocumentPrefix,
+    embeddingShadowModel: fileConfig.embeddingShadowModel,
+    embeddingShadowDimensions: fileConfig.embeddingShadowDimensions,
+    embeddingShadowQueryPrefix: fileConfig.embeddingShadowQueryPrefix,
+    embeddingShadowDocumentPrefix: fileConfig.embeddingShadowDocumentPrefix,
     embeddingDtype,
     embeddingApiUrl: fileConfig.embeddingApiUrl,
     embeddingApiKey: fileConfig.embeddingApiUrl

@@ -176,13 +176,13 @@ export function applyEmbeddingTaskPrefix(
   return `${prefix}${text}`;
 }
 
-function embeddingCacheFingerprint(): string {
+function embeddingCacheFingerprint(spec?: EmbeddingModelSpec): string {
   return [
-    CONFIG.embeddingModel,
+    spec?.model ?? CONFIG.embeddingModel,
     CONFIG.embeddingPooling,
-    CONFIG.embeddingQueryPrefix ?? "",
-    CONFIG.embeddingDocumentPrefix ?? "",
-    CONFIG.embeddingUseTaskPrefixes ? "1" : "0",
+    spec ? (spec.queryPrefix ?? "") : (CONFIG.embeddingQueryPrefix ?? ""),
+    spec ? (spec.documentPrefix ?? "") : (CONFIG.embeddingDocumentPrefix ?? ""),
+    CONFIG.embeddingUseTaskPrefixes || spec ? "1" : "0",
     CONFIG.embeddingDtype ?? "",
   ].join("\0");
 }
@@ -346,6 +346,19 @@ export async function fetchRemoteEmbeddingWithRetry(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+/**
+ * A model to embed with, when it is not the configured default.
+ *
+ * The shadow index needs a second model in the same process: the model in
+ * charge keeps serving the store, the new one fills the parallel column.
+ */
+export type EmbeddingModelSpec = {
+  model: string;
+  dimensions?: number;
+  queryPrefix?: string;
+  documentPrefix?: string;
+};
+
 export class EmbeddingService {
   private pipe: any = null;
   private initPromise: Promise<void> | null = null;
@@ -354,6 +367,29 @@ export class EmbeddingService {
   public initError: string | null = null;
   private cache: Map<string, Float32Array> = new Map();
   private cachedFingerprint: string | null = null;
+
+  constructor(private readonly spec?: EmbeddingModelSpec) {}
+
+  /** The model this service embeds with. */
+  get modelId(): string {
+    return this.spec?.model ?? CONFIG.embeddingModel;
+  }
+
+  /** Task prefixes for this model: the shadow model brings its own. */
+  private prefixOptions() {
+    if (!this.spec) {
+      return {
+        useTaskPrefixes: CONFIG.embeddingUseTaskPrefixes,
+        queryPrefix: CONFIG.embeddingQueryPrefix,
+        documentPrefix: CONFIG.embeddingDocumentPrefix,
+      };
+    }
+    return {
+      useTaskPrefixes: true,
+      queryPrefix: this.spec.queryPrefix ?? "",
+      documentPrefix: this.spec.documentPrefix ?? "",
+    };
+  }
 
   static getInstance(): EmbeddingService {
     if (!(globalThis as any)[GLOBAL_EMBEDDING_KEY]) {
@@ -386,22 +422,22 @@ export class EmbeddingService {
       // Local model path
       const { pipeline } = await ensureTransformersLoaded();
       // Explicit config wins; otherwise auto-resolve from model declaration / cache (#393).
-      const dtype = CONFIG.embeddingDtype ?? resolveLocalOnnxDtype(CONFIG.embeddingModel);
+      const dtype = CONFIG.embeddingDtype ?? resolveLocalOnnxDtype(this.modelId);
       if (dtype) {
         log("Resolved local ONNX dtype for embedding warmup", {
-          model: CONFIG.embeddingModel,
+          model: this.modelId,
           dtype,
           source: CONFIG.embeddingDtype ? "config" : "auto",
         });
       }
-      this.pipe = await pipeline("feature-extraction", CONFIG.embeddingModel, {
+      this.pipe = await pipeline("feature-extraction", this.modelId, {
         ...(dtype ? { dtype } : {}),
         progress_callback: progressCallback,
       });
       this.isWarmedUp = true;
       this.initError = null;
       log("Embedding model warmed up", {
-        model: CONFIG.embeddingModel,
+        model: this.modelId,
         pooling: CONFIG.embeddingPooling,
         dtype: dtype ?? null,
       });
@@ -415,13 +451,13 @@ export class EmbeddingService {
   }
 
   async embed(text: string, options?: EmbedOptions): Promise<Float32Array> {
-    const fingerprint = embeddingCacheFingerprint();
+    const fingerprint = embeddingCacheFingerprint(this.spec);
     if (this.cachedFingerprint !== fingerprint) {
       this.clearCache();
       this.cachedFingerprint = fingerprint;
     }
 
-    const input = applyEmbeddingTaskPrefix(text, options);
+    const input = applyEmbeddingTaskPrefix(text, options, this.prefixOptions());
 
     const cached = this.cache.get(input);
     if (cached) return cached;
@@ -465,3 +501,26 @@ export class EmbeddingService {
 }
 
 export const embeddingService = EmbeddingService.getInstance();
+
+/**
+ * The shadow model, when one is configured.
+ *
+ * It is a second service, not a replacement: the model in charge keeps
+ * answering queries while the shadow index is filled, and the shadow only
+ * takes over once the index is complete.
+ */
+let shadowService: EmbeddingService | null = null;
+
+export function getShadowEmbeddingService(): EmbeddingService | null {
+  const model = CONFIG.embeddingShadowModel;
+  if (!model) return null;
+  if (!shadowService) {
+    shadowService = new EmbeddingService({
+      model,
+      dimensions: CONFIG.embeddingShadowDimensions,
+      queryPrefix: CONFIG.embeddingShadowQueryPrefix,
+      documentPrefix: CONFIG.embeddingShadowDocumentPrefix,
+    });
+  }
+  return shadowService;
+}

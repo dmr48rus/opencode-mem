@@ -14,6 +14,10 @@ export interface MemoryRecord {
   content: string;
   vector: Float32Array;
   tagsVector?: Float32Array;
+  /** Vector of the shadow (second) model, written to a parallel column. */
+  shadowVector?: Float32Array;
+  /** Which model produced `shadowVector`. */
+  shadowModel?: string;
   containerTag: string;
   tags?: string;
   type?: string;

@@ -148,6 +148,15 @@ export function memoryShardMigrations(dimensions: number): SchemaMigration[] {
         { sql: `CREATE INDEX IF NOT EXISTS idx_aged_at ON memories(aged_at)` },
       ],
     },
+    {
+      version: 4,
+      description:
+        "Shadow vector column for a second embedding model: the model in charge keeps serving the store while the shadow index is filled",
+      statements: [
+        { sql: `ALTER TABLE memories ADD COLUMN shadow_vector BLOB` },
+        { sql: `ALTER TABLE memories ADD COLUMN shadow_model TEXT` },
+      ],
+    },
   ];
 }
 

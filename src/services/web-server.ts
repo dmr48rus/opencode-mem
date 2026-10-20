@@ -19,6 +19,7 @@ import {
   handleUpdateMemory,
   handleSearch,
   handleSnapshot,
+  handleRunReindex,
   handleRunSweep,
   handleRememberByProject,
   handleStats,
@@ -683,6 +684,18 @@ export class WebServer {
         return this.jsonResponse(result);
       }
 
+      // The shadow index: fill it in steps and switch it on or off without a
+      // deploy - the mode is stored with the data.
+      if (path === "/api/reindex" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as any;
+        const result = await handleRunReindex({
+          limit: body.limit,
+          batchSize: body.batchSize,
+          mode: body.mode,
+        });
+        return this.jsonResponse(result);
+      }
+
       // The sweep is a dry run unless the caller says otherwise: forgetting is
       // not something a request should do by accident.
       if (path === "/api/sweep" && method === "POST") {
@@ -692,6 +705,7 @@ export class WebServer {
           episodicDays: body.episodicDays,
           proceduralDays: body.proceduralDays,
           limit: body.limit,
+          restore: body.restore === true,
         });
         return this.jsonResponse(result);
       }

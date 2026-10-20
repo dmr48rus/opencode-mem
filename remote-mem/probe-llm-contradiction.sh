@@ -81,9 +81,12 @@ JSON
 )
   RESP=$(curl -s "http://127.0.0.1:$PORT/v1/chat/completions" \
     -H "Content-Type: application/json" -d "$BODY")
+  # Ответ приходит капсом ("СОВМЕСТИМЫ"), а вариант "не связаны" состоит из
+  # двух слов - поэтому ответ приводится к нижнему регистру и сравнивается по
+  # вхождению, а не по первому слову.
   printf '%s' "$RESP" | grep -o '"content":"[^"]*"' | head -1 \
     | sed 's/"content":"//;s/"$//' \
-    | tr 'A-Z' 'a-z' | cut -d' ' -f1 | tr -d '.,!?'
+    | tr 'A-Z' 'a-z' | tr -d '.,!?' | tr -s ' '
 }
 
 SCORE=0
@@ -98,10 +101,12 @@ run_case() {
   R1=$(ask "$A" "$B")
   R2=$(ask "$B" "$A")
   OK1="нет"; OK2="нет"
-  [ "$R1" = "$EXPECT" ] && OK1="да" && SCORE=$((SCORE + 1))
-  [ "$R2" = "$EXPECT" ] && OK2="да" && SCORE=$((SCORE + 1))
-  if [ "$R1" = "$R2" ]; then CONSISTENT=$((CONSISTENT + 1)); C="да"; else C="нет"; fi
-  printf '  ждём %-11s | %-11s | порядок меняет: %s\n' "$EXPECT" "$R1" "$C"
+  case "$R1" in *"$EXPECT"*) OK1="да"; SCORE=$((SCORE + 1)) ;; esac
+  case "$R2" in *"$EXPECT"*) OK2="да"; SCORE=$((SCORE + 1)) ;; esac
+  # Метка про порядок: "да" - ответ изменился, когда записи переставили.
+  if [ "$R1" = "$R2" ]; then CONSISTENT=$((CONSISTENT + 1)); C="нет"; else C="да"; fi
+  printf '  ждём %-11s | %-11s | второй порядок: %-11s | порядок меняет: %s\n' \
+    "$EXPECT" "$R1" "$R2" "$C"
   printf '      %s\n' "$A"
   printf '      %s\n' "$B"
 }

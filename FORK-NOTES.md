@@ -8,6 +8,15 @@
 Upstream: `tickernelz/opencode-mem`, branch `patched/2.31.0`.
 Everything below is committed on that branch; `main` is untouched upstream.
 
+**`remote-mem/` in this repository is a mirror, not the deployment source.** The
+source is a separate working copy on the development machine, the bundle is
+packed from there, and this mirror lags behind it. Edit the working copy, not
+this one. The exception is the probe scripts (`probe-local-llm.sh`,
+`probe-llm-contradiction.sh`): they live here because this repository is on
+GitHub and the server has no access to the development machine, so the probes
+are fetched from here by raw link. They are the current ones, and each prints
+its version at startup so a stale copy on the server is visible immediately.
+
 ## The server lives here too
 
 `remote-mem/` is the standalone memory server this fork was paired with: a

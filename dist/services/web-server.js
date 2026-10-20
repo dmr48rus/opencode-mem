@@ -10,7 +10,7 @@ import { getOrCreateAuthToken, isAuthorizedApiRequest } from "./auth-token.js";
 import { WebAuth } from "./web-auth.js";
 import { NODE_HTTP_IDLE_TIMEOUT_MS } from "./request-timeouts.js";
 import { checkMcpHost, handleMcpJsonRpc } from "./mcp-endpoint.js";
-import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
+import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleRunReindex, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
 const isBun = typeof globalThis.Bun !== "undefined";
 const MIN_FAILED_TAKEOVERS = 3;
 export function attachNodeDisconnectHandlers(req, res, onDisconnect) {
@@ -528,6 +528,17 @@ export class WebServer {
                 const result = await handleRunCleanup();
                 return this.jsonResponse(result);
             }
+            // The shadow index: fill it in steps and switch it on or off without a
+            // deploy - the mode is stored with the data.
+            if (path === "/api/reindex" && method === "POST") {
+                const body = (await req.json().catch(() => ({})));
+                const result = await handleRunReindex({
+                    limit: body.limit,
+                    batchSize: body.batchSize,
+                    mode: body.mode,
+                });
+                return this.jsonResponse(result);
+            }
             // The sweep is a dry run unless the caller says otherwise: forgetting is
             // not something a request should do by accident.
             if (path === "/api/sweep" && method === "POST") {
@@ -537,6 +548,7 @@ export class WebServer {
                     episodicDays: body.episodicDays,
                     proceduralDays: body.proceduralDays,
                     limit: body.limit,
+                    restore: body.restore === true,
                 });
                 return this.jsonResponse(result);
             }

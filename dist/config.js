@@ -745,6 +745,10 @@ function buildConfig(fileConfig) {
         embeddingPooling,
         embeddingQueryPrefix,
         embeddingDocumentPrefix,
+        embeddingShadowModel: fileConfig.embeddingShadowModel,
+        embeddingShadowDimensions: fileConfig.embeddingShadowDimensions,
+        embeddingShadowQueryPrefix: fileConfig.embeddingShadowQueryPrefix,
+        embeddingShadowDocumentPrefix: fileConfig.embeddingShadowDocumentPrefix,
         embeddingDtype,
         embeddingApiUrl: fileConfig.embeddingApiUrl,
         embeddingApiKey: fileConfig.embeddingApiUrl

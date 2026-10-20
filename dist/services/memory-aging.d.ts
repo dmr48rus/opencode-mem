@@ -11,6 +11,7 @@ export type SweepReport = {
     scanned: number;
     byTier: Record<MemoryTier, number>;
     aged: number;
+    restored: number;
     candidates: SweepCandidate[];
 };
 export type SweepOptions = {
@@ -18,6 +19,7 @@ export type SweepOptions = {
     proceduralDays?: number;
     dryRun?: boolean;
     limit?: number;
+    restore?: boolean;
 };
 export declare function runMemorySweep(options?: SweepOptions): Promise<SweepReport>;
 //# sourceMappingURL=memory-aging.d.ts.map

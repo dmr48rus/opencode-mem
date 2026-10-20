@@ -1,4 +1,4 @@
-import { embeddingService } from "./embedding.js";
+import { embeddingService, getShadowEmbeddingService } from "./embedding.js";
 import { loadOpencodeProvider } from "./ai/opencode-provider-loader.js";
 import { tursoShardManager } from "./turso/shard-manager.js";
 import { fuseGlobalRanks, isRrfMode, rrfK, tursoVectorSearch } from "./turso/vector-search.js";
@@ -322,6 +322,24 @@ export async function handleAddMemory(data) {
                 task: "document",
             });
         }
+        // The shadow vector, when a shadow model is configured: the record is
+        // written with both, so the shadow index stays complete without another
+        // reindex pass. A failure here is not fatal - the reindex can fill it in.
+        let shadowVector = undefined;
+        let shadowModel = undefined;
+        const shadowService = getShadowEmbeddingService();
+        if (shadowService) {
+            try {
+                await shadowService.warmup();
+                shadowVector = await shadowService.embedWithTimeout(embeddingInput, { task: "document" });
+                shadowModel = shadowService.modelId;
+            }
+            catch (error) {
+                log("Shadow embedding failed; the record is written without a shadow vector", {
+                    error: String(error),
+                });
+            }
+        }
         const { scope, hash } = extractScopeFromTag(data.containerTag);
         return tursoShardManager.withScopeWriteLock(scope, hash, async () => {
             const shard = await tursoShardManager.getWriteShard(scope, hash);
@@ -332,6 +350,8 @@ export async function handleAddMemory(data) {
                 content: data.content,
                 vector,
                 tagsVector,
+                shadowVector,
+                shadowModel,
                 containerTag: data.containerTag,
                 tags: tags.length > 0 ? tags.join(",") : undefined,
                 type: data.type,
@@ -481,6 +501,27 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
         await ensureTursoReady();
         await embeddingService.warmup();
         const queryVector = await embeddingService.embedWithTimeout(query, { task: "query" });
+        // The shadow model, when it is in play: its own query vector and its own
+        // channel. The mode lives with the data, not in the config, so the switch
+        // survives a restart without another deploy.
+        let shadowMode = "off";
+        let shadowQueryVector;
+        try {
+            const { getShadowMode } = await import("./memory-shadow.js");
+            shadowMode = await getShadowMode();
+            if (shadowMode !== "off") {
+                const shadowService = getShadowEmbeddingService();
+                if (shadowService) {
+                    await shadowService.warmup();
+                    shadowQueryVector = await shadowService.embedWithTimeout(query, { task: "query" });
+                }
+            }
+        }
+        catch (error) {
+            log("Shadow channel unavailable; continuing without it", { error: String(error) });
+            shadowMode = "off";
+            shadowQueryVector = undefined;
+        }
         const memoryResults = [];
         let promptResults = [];
         const filterTags = (Array.isArray(tag) ? tag : tag ? [tag] : [])
@@ -512,7 +553,7 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
                 const shards = await tursoShardManager.getAllShards(scope, hash);
                 for (const shard of shards) {
                     try {
-                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, filterTag, pageSize * 2, query, globalLexical);
+                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, filterTag, pageSize * 2, query, globalLexical, shadowQueryVector, shadowMode);
                         for (const result of results) {
                             const key = String(result.id ?? `${result.memory}:${result.similarity}`);
                             if (seenMemoryKeys.has(key))
@@ -553,7 +594,7 @@ export async function handleSearch(query, tag, page = 1, pageSize = 20) {
                 const shards = await tursoShardManager.getAllShards(scope, hash);
                 for (const shard of shards) {
                     try {
-                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, containerTag, pageSize, query, globalLexical);
+                        const results = await tursoVectorSearch.searchInShard(shard, queryVector, containerTag, pageSize, query, globalLexical, shadowQueryVector, shadowMode);
                         memoryResults.push(...results);
                     }
                     catch (error) {
@@ -827,6 +868,33 @@ async function resolveProjectTag(wanted) {
  * deleted - the content stays, the marker can be cleared, and the search stops
  * returning them.
  */
+/**
+ * Fill the shadow index, and switch how it takes part in the search.
+ *
+ * The reindex is bounded, so the caller drives it in steps: the model download
+ * and 1500 embeddings take minutes, and one long request is a request that
+ * times out. The mode is stored with the data, so switching the shadow on (or
+ * off again) does not need a deploy.
+ */
+export async function handleRunReindex(data) {
+    try {
+        const { runShadowReindex, setShadowMode, isShadowConfigured } = await import("./memory-shadow.js");
+        if (data?.mode)
+            await setShadowMode(data.mode);
+        if (!isShadowConfigured()) {
+            return { success: true, data: { skipped: "no shadow model configured" } };
+        }
+        const report = await runShadowReindex({
+            limit: data?.limit,
+            batchSize: data?.batchSize,
+        });
+        return { success: true, data: report };
+    }
+    catch (error) {
+        log("handleRunReindex: error", { error: String(error) });
+        return { success: false, error: String(error) };
+    }
+}
 export async function handleRunSweep(data) {
     try {
         const { runMemorySweep } = await import("./memory-aging.js");
@@ -835,6 +903,7 @@ export async function handleRunSweep(data) {
             episodicDays: data?.episodicDays,
             proceduralDays: data?.proceduralDays,
             limit: data?.limit,
+            restore: data?.restore === true,
         });
         return { success: true, data: report };
     }

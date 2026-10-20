@@ -28,6 +28,22 @@ interface OpenCodeMemConfig {
      */
     embeddingDocumentPrefix?: string;
     /**
+     * A second embedding model, written to a parallel ("shadow") column.
+     *
+     * The model in charge keeps serving the store while the shadow index is
+     * filled, so switching models never leaves the store unreadable. Measured
+     * 20.10.2026 on the live corpus: a multilingual model takes the semantic
+     * slice from 16/28 to 21/28 (offline, together with the lexical channel),
+     * while the current English-only model adds nothing over that channel.
+     */
+    embeddingShadowModel?: string;
+    /** Vector width of the shadow model. Default: the model's own preset. */
+    embeddingShadowDimensions?: number;
+    /** Prefix for query-task embeddings of the shadow model. */
+    embeddingShadowQueryPrefix?: string;
+    /** Prefix for document-task embeddings of the shadow model. */
+    embeddingShadowDocumentPrefix?: string;
+    /**
      * Optional dtype for the local ONNX pipeline (e.g. `"q8"`, `"fp32"`).
      * When set, passed to `pipeline({ dtype })` and outranks auto-detection.
      */
@@ -218,6 +234,10 @@ declare function buildConfig(fileConfig: OpenCodeMemConfig): {
     embeddingPooling: EmbeddingPooling;
     embeddingQueryPrefix: string | undefined;
     embeddingDocumentPrefix: string | undefined;
+    embeddingShadowModel: string | undefined;
+    embeddingShadowDimensions: number | undefined;
+    embeddingShadowQueryPrefix: string | undefined;
+    embeddingShadowDocumentPrefix: string | undefined;
     embeddingDtype: "auto" | "fp32" | "fp16" | "q8" | "int8" | "uint8" | "q4" | "bnb4" | "q4f16" | "q2" | "q2f16" | "q1" | "q1f16" | undefined;
     embeddingApiUrl: string | undefined;
     embeddingApiKey: string | undefined;
@@ -319,6 +339,10 @@ export declare let CONFIG: {
     embeddingPooling: EmbeddingPooling;
     embeddingQueryPrefix: string | undefined;
     embeddingDocumentPrefix: string | undefined;
+    embeddingShadowModel: string | undefined;
+    embeddingShadowDimensions: number | undefined;
+    embeddingShadowQueryPrefix: string | undefined;
+    embeddingShadowDocumentPrefix: string | undefined;
     embeddingDtype: "auto" | "fp32" | "fp16" | "q8" | "int8" | "uint8" | "q4" | "bnb4" | "q4f16" | "q2" | "q2f16" | "q1" | "q1f16" | undefined;
     embeddingApiUrl: string | undefined;
     embeddingApiKey: string | undefined;

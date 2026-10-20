@@ -1,3 +1,4 @@
+import type { ShadowMode } from "./turso/vector-search.js";
 import type { MemoryType } from "../types/index.js";
 import type { UserProfileData } from "./user-profile/types.js";
 interface ApiResponse<T = any> {
@@ -141,11 +142,25 @@ export declare function handleRememberByProject(data: {
  * deleted - the content stays, the marker can be cleared, and the search stops
  * returning them.
  */
+/**
+ * Fill the shadow index, and switch how it takes part in the search.
+ *
+ * The reindex is bounded, so the caller drives it in steps: the model download
+ * and 1500 embeddings take minutes, and one long request is a request that
+ * times out. The mode is stored with the data, so switching the shadow on (or
+ * off again) does not need a deploy.
+ */
+export declare function handleRunReindex(data?: {
+    limit?: number;
+    batchSize?: number;
+    mode?: ShadowMode;
+}): Promise<ApiResponse<any>>;
 export declare function handleRunSweep(data?: {
     dryRun?: boolean;
     episodicDays?: number;
     proceduralDays?: number;
     limit?: number;
+    restore?: boolean;
 }): Promise<ApiResponse<any>>;
 export declare function handleStats(): Promise<ApiResponse<{
     total: number;

@@ -127,13 +127,31 @@ export class TursoVectorSearch {
         const contentVector = vectorToJson(record.vector);
         if (record.tagsVector) {
             await db.execute(INSERT_WITH_TAGS, insertArgs(record, contentVector, vectorToJson(record.tagsVector)));
+            await this.writeShadowVector(db, record);
             globalLexicalCorpus = null;
             return;
         }
         await db.execute(INSERT_WITHOUT_TAGS, insertArgs(record, contentVector, null));
+        await this.writeShadowVector(db, record);
         globalLexicalCorpus = null;
     }
-    async searchInShard(shard, queryVector, containerTag, limit, queryText, globalLexicalRanks) {
+    /**
+     * The shadow vector, if the record carries one.
+     *
+     * It lives in its own column with its own model id, so the model in charge
+     * keeps answering queries with its own vectors while the shadow index is
+     * still being filled.
+     */
+    async writeShadowVector(db, record) {
+        if (!record.shadowVector)
+            return;
+        await db.execute(`UPDATE memories SET shadow_vector = ?, shadow_model = ? WHERE id = ?`, [
+            vectorToJson(record.shadowVector),
+            record.shadowModel ?? "",
+            record.id,
+        ]);
+    }
+    async searchInShard(shard, queryVector, containerTag, limit, queryText, globalLexicalRanks, shadowQueryVector, shadowMode = "off") {
         const db = await tursoConnectionManager.getConnection(shard.dbPath);
         await this.prepareShardDb(db);
         const queryJson = vectorToJson(queryVector);
@@ -174,12 +192,23 @@ export class TursoVectorSearch {
         if (ids.length === 0)
             return [];
         const placeholders = ids.map(() => "?").join(",");
+        // The shadow column is only read when the shadow is in play: its vectors
+        // have another width, so handing the current query vector to it would be
+        // an error, not a zero.
+        const shadowActive = shadowMode !== "off" && !!shadowQueryVector;
+        const shadowColumn = shadowActive
+            ? `CASE WHEN shadow_vector IS NOT NULL
+               THEN vector_distance_cos(shadow_vector, vector32(?))
+               ELSE NULL END AS shadow_dist,`
+            : "";
+        const shadowJson = shadowActive ? vectorToJson(shadowQueryVector) : null;
         const rows = await db.all(containerTag === ""
             ? `
       SELECT id, content, tags, created_at, metadata, container_tag,
              display_name, user_name, user_email, project_path, project_name,
              git_repo_url, is_pinned, session_id,
              vector_distance_cos(vector, vector32(?)) AS content_dist,
+             ${shadowColumn}
              CASE WHEN tags_vector IS NOT NULL
                THEN vector_distance_cos(tags_vector, vector32(?))
                ELSE NULL END AS tags_dist
@@ -191,16 +220,20 @@ export class TursoVectorSearch {
              display_name, user_name, user_email, project_path, project_name,
              git_repo_url, is_pinned, session_id,
              vector_distance_cos(vector, vector32(?)) AS content_dist,
+             ${shadowColumn}
              CASE WHEN tags_vector IS NOT NULL
                THEN vector_distance_cos(tags_vector, vector32(?))
                ELSE NULL END AS tags_dist
       FROM memories
       WHERE id IN (${placeholders}) AND container_tag = ? AND aged_at IS NULL
     `, containerTag === ""
-            ? [queryJson, queryJson, ...ids]
-            : [queryJson, queryJson, ...ids, containerTag]);
+            ? [queryJson, ...(shadowActive ? [shadowJson] : []), queryJson, ...ids]
+            : [queryJson, ...(shadowActive ? [shadowJson] : []), queryJson, ...ids, containerTag]);
         const components = rows.map((row) => {
             const contentSim = distanceToSimilarity(Number(row.content_dist));
+            const shadowSim = row.shadow_dist == null || row.shadow_dist === undefined
+                ? 0
+                : distanceToSimilarity(Number(row.shadow_dist));
             const tagsSim = row.tags_dist == null || row.tags_dist === undefined
                 ? 0
                 : distanceToSimilarity(Number(row.tags_dist));
@@ -217,7 +250,7 @@ export class TursoVectorSearch {
             }
             const keywordSim = keywordScores.get(String(row.id)) ?? 0;
             const finalTagsSim = Math.max(tagsSim, exactMatchBoost);
-            return { row, contentSim, finalTagsSim, keywordSim, memoryTagsStr };
+            return { row, contentSim, shadowSim, finalTagsSim, keywordSim, memoryTagsStr };
         });
         // With query text: blend vector + keyword. Without: keep classic 0.6/0.4.
         //
@@ -241,11 +274,27 @@ export class TursoVectorSearch {
                 id: String(component.row.id),
                 score: component.finalTagsSim,
             })));
-            const fusedScores = rrfScore([contentRanks, tagRanks, lexicalRanks], rrfK());
-            // Normalize so that first place in all three channels is 1.0. The scale
+            const channels = [contentRanks, tagRanks, lexicalRanks];
+            if (shadowActive) {
+                const shadowRanks = rankByScore(components.map((component) => ({
+                    id: String(component.row.id),
+                    score: component.shadowSim,
+                })));
+                if (shadowMode === "replace") {
+                    // The shadow takes the seat of the content channel: the model in
+                    // charge is the noisy one on this corpus, and a second vote from it
+                    // would dilute the channel that works.
+                    channels[0] = shadowRanks;
+                }
+                else {
+                    channels.push(shadowRanks);
+                }
+            }
+            const fusedScores = rrfScore(channels, rrfK());
+            // Normalize so that first place in every channel is 1.0. The scale
             // is a constant, not a per-shard maximum: a per-shard maximum would make
             // every shard contribute its own winner to the global merge.
-            const scale = (rrfK() + 1) / 3;
+            const scale = (rrfK() + 1) / channels.length;
             for (const [id, score] of fusedScores)
                 fused.set(id, score * scale);
         }

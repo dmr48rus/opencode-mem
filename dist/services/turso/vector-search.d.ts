@@ -20,11 +20,27 @@ export declare function rrfK(): number;
  * over global ranks gives 20/20 and 19/28.
  */
 export declare function fuseGlobalRanks(results: SearchResult[], lexicalRanks: Map<string, number>, k: number): void;
+/**
+ * How the shadow (second-model) index takes part in the search.
+ *
+ * - "off": the shadow is ignored; the search behaves exactly as before.
+ * - "channel": the shadow votes as one more channel of the rank fusion.
+ * - "replace": the shadow replaces the content channel of the model in charge.
+ */
+export type ShadowMode = "off" | "channel" | "replace";
 export declare class TursoVectorSearch {
     private prepareShardDb;
     insertVectorInTransaction(tx: TursoTx, record: MemoryRecord): Promise<void>;
     insertVector(db: TursoDb, record: MemoryRecord): Promise<void>;
-    searchInShard(shard: ShardInfo, queryVector: Float32Array, containerTag: string, limit: number, queryText?: string, globalLexicalRanks?: Map<string, number>): Promise<SearchResult[]>;
+    /**
+     * The shadow vector, if the record carries one.
+     *
+     * It lives in its own column with its own model id, so the model in charge
+     * keeps answering queries with its own vectors while the shadow index is
+     * still being filled.
+     */
+    private writeShadowVector;
+    searchInShard(shard: ShardInfo, queryVector: Float32Array, containerTag: string, limit: number, queryText?: string, globalLexicalRanks?: Map<string, number>, shadowQueryVector?: Float32Array, shadowMode?: ShadowMode): Promise<SearchResult[]>;
     /**
      * Lexical ranking over a SET of shards, computed globally.
      *

@@ -62,7 +62,20 @@ export declare function fetchRemoteEmbeddingWithRetry(fetchImpl: typeof fetch, i
     maxAttempts?: number;
     backoffMs?: number;
 }): Promise<any>;
+/**
+ * A model to embed with, when it is not the configured default.
+ *
+ * The shadow index needs a second model in the same process: the model in
+ * charge keeps serving the store, the new one fills the parallel column.
+ */
+export type EmbeddingModelSpec = {
+    model: string;
+    dimensions?: number;
+    queryPrefix?: string;
+    documentPrefix?: string;
+};
 export declare class EmbeddingService {
+    private readonly spec?;
     private pipe;
     private initPromise;
     isWarmedUp: boolean;
@@ -70,6 +83,11 @@ export declare class EmbeddingService {
     initError: string | null;
     private cache;
     private cachedFingerprint;
+    constructor(spec?: EmbeddingModelSpec | undefined);
+    /** The model this service embeds with. */
+    get modelId(): string;
+    /** Task prefixes for this model: the shadow model brings its own. */
+    private prefixOptions;
     static getInstance(): EmbeddingService;
     warmup(progressCallback?: (progress: any) => void): Promise<void>;
     private initializeModel;
@@ -78,5 +96,6 @@ export declare class EmbeddingService {
     clearCache(): void;
 }
 export declare const embeddingService: EmbeddingService;
+export declare function getShadowEmbeddingService(): EmbeddingService | null;
 export {};
 //# sourceMappingURL=embedding.d.ts.map

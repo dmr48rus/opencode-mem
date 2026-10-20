@@ -41,6 +41,35 @@ describe("shadow index", () => {
     return vector;
   }
 
+  it("lets the shadow replace the content channel in the global fusion", async () => {
+    const { fuseGlobalRanks } = await import("../src/services/turso/vector-search.js");
+    // The lexical channel prefers "c", the old model's distance prefers "a",
+    // the shadow's distance prefers "c": with two records the sums are
+    // symmetric and the test proves nothing.
+    const lexical = new Map([
+      ["a", 3],
+      ["b", 2],
+      ["c", 1],
+    ]);
+    const make = () => [
+      { id: "a", memory: "a", similarity: 0, contentSim: 0.9, tagsSim: 0.9, shadowSim: 0.1 },
+      { id: "b", memory: "b", similarity: 0, contentSim: 0.8, tagsSim: 0.8, shadowSim: 0.2 },
+      { id: "c", memory: "c", similarity: 0, contentSim: 0.1, tagsSim: 0.1, shadowSim: 0.9 },
+    ];
+
+    // Off: the model in charge decides, and it prefers "a".
+    const off = make();
+    fuseGlobalRanks(off, lexical, 10, "off");
+    expect(off[0].similarity).toBeGreaterThan(off[2].similarity);
+
+    // Replace: the shadow's distance is the content channel, and it prefers "c".
+    // Without this the shadow was counted inside the shard and then
+    // overwritten here by the old model, so the switch did nothing.
+    const replace = make();
+    fuseGlobalRanks(replace, lexical, 10, "replace");
+    expect(replace[2].similarity).toBeGreaterThan(replace[0].similarity);
+  });
+
   it("stores the shadow vector in its own column and reads it on request", async () => {
     process.env.OPENCODE_MEM_RRF = "1";
     const { tursoShardManager, tursoConnectionManager, tursoVectorSearch } = await seed();

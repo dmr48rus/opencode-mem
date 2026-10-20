@@ -41,6 +41,8 @@ export interface SearchResult {
   /** Raw channel scores, kept so the fusion can rank GLOBALLY (see fuseGlobalRanks). */
   contentSim?: number;
   tagsSim?: number;
+  /** The shadow model's distance to the query, same reason. */
+  shadowSim?: number;
   createdAt?: number;
   tags?: string[];
   metadata?: Record<string, unknown>;

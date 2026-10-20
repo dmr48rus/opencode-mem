@@ -773,7 +773,7 @@ export async function handleSearch(
     // searchInShard) ranks every shard against its own hub, and the best match
     // on the whole corpus loses to the hub of its own project.
     if (isRrfMode()) {
-      fuseGlobalRanks(memoryResults, globalLexical, rrfK());
+      fuseGlobalRanks(memoryResults, globalLexical, rrfK(), shadowMode);
     }
 
     const formattedPrompts: FormattedPrompt[] = promptResults.map((p) => ({

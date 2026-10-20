@@ -1,5 +1,10 @@
 # Fork notes — what this branch adds over upstream 2.31.0
 
+> **Aletheia** — кодовое имя форка (богиня истины; «не-забываемое»).
+> Полное описание: основа, источники идей, отличия, метрики и инструкция —
+> в репозитории Hermes, файл `ALETHEIA.md`. Этот файл — технические заметки
+> по сборке и раскатке.
+
 Upstream: `tickernelz/opencode-mem`, branch `patched/2.31.0`.
 Everything below is committed on that branch; `main` is untouched upstream.
 

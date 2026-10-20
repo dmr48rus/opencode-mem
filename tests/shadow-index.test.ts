@@ -108,10 +108,12 @@ describe("shadow index", () => {
     expect(withoutShadow.length).toBeGreaterThan(0);
 
     // The shadow speaks for itself: another width, another column. The vector
-    // of the model in charge is still passed - the tags channel needs it.
+    // of the model in charge is NOT passed - in "replace" mode it does not
+    // exist, and asking for candidates with a vector of another width is an
+    // error, not an empty list. This is the shape the live server has.
     const withShadow = await tursoVectorSearch.searchInShard(
       shard,
-      axis(0, 768),
+      undefined,
       containerTag,
       10,
       "слов_нет_в_тексте",

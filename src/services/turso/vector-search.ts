@@ -237,8 +237,26 @@ export class TursoVectorSearch {
     // the hybrid is measured on the live store.
     const rrfMode = hasKeyword && isRrfMode();
 
-    const contentResults = await this.exactScanKind(db, queryJson, k, containerTag, "vector");
-    const tagsResults = await this.exactScanKind(db, queryJson, k, containerTag, "tags_vector");
+    // The shadow is asked for its own candidates: its vectors have another
+    // width, so the current query vector cannot stand in for it.
+    const shadowActive = shadowMode !== "off" && !!shadowQueryVector;
+    const shadowJson = shadowActive ? vectorToJson(shadowQueryVector as Float32Array) : "";
+
+    // The candidates come from the channels that actually answer. In
+    // "replace" mode the model in charge has no query vector at all (its
+    // channel is not used), and asking it for candidates with a vector of
+    // another width is an error, not an empty list - so the shadow is asked
+    // instead. Measured: with the old candidates the search returned nothing.
+    const legacyChannels = shadowMode !== "replace";
+    const contentResults = legacyChannels
+      ? await this.exactScanKind(db, queryJson, k, containerTag, "vector")
+      : [];
+    const tagsResults = legacyChannels
+      ? await this.exactScanKind(db, queryJson, k, containerTag, "tags_vector")
+      : [];
+    const shadowResults = shadowActive
+      ? await this.exactScanKind(db, shadowJson, k, containerTag, "shadow_vector")
+      : [];
     // In rank-fusion mode the LIKE keyword channel is replaced by BM25, so the
     // per-token scans (up to 16 of them) are not paid for twice.
     const keywordScores = rrfMode
@@ -256,6 +274,7 @@ export class TursoVectorSearch {
     const candidateIds = new Set<string>();
     for (const result of contentResults) candidateIds.add(result.id);
     for (const result of tagsResults) candidateIds.add(result.id);
+    for (const result of shadowResults) candidateIds.add(result.id);
     for (const id of keywordScores.keys()) candidateIds.add(id);
     for (const [id, rank] of lexicalRanks) {
       if (rank <= k) candidateIds.add(id);
@@ -268,13 +287,11 @@ export class TursoVectorSearch {
     // The shadow column is only read when the shadow is in play: its vectors
     // have another width, so handing the current query vector to it would be
     // an error, not a zero.
-    const shadowActive = shadowMode !== "off" && !!shadowQueryVector;
     const shadowColumn = shadowActive
       ? `CASE WHEN shadow_vector IS NOT NULL
                THEN vector_distance_cos(shadow_vector, vector32(?))
                ELSE NULL END AS shadow_dist,`
       : "";
-    const shadowJson = shadowActive ? vectorToJson(shadowQueryVector as Float32Array) : null;
     // In "replace" mode the channels of the model in charge are not used at
     // all, so their distances are not computed - and the query does not have
     // to be embedded with that model either (measured: that second embedding

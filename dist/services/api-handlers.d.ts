@@ -169,6 +169,11 @@ export declare function handleStats(): Promise<ApiResponse<{
         project: number;
     };
     byType: Record<string, number>;
+    memoryMb?: {
+        rss: number;
+        heapUsed: number;
+        external: number;
+    };
 }>>;
 export declare function handlePinMemory(id: string): Promise<ApiResponse<void>>;
 export declare function handleUnpinMemory(id: string): Promise<ApiResponse<void>>;

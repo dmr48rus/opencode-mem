@@ -66,6 +66,14 @@ interface OpenCodeMemConfig {
   /** Prefix for document-task embeddings of the shadow model. */
   embeddingShadowDocumentPrefix?: string;
   /**
+   * dtype of the shadow model's ONNX file (e.g. `"q8"`).
+   *
+   * The model's own declaration can name a dtype whose file the repository
+   * does not have (embeddinggemma-2 declares `bfloat16`, and ships no such
+   * file), so the shadow states it explicitly.
+   */
+  embeddingShadowDtype?: string;
+  /**
    * Optional dtype for the local ONNX pipeline (e.g. `"q8"`, `"fp32"`).
    * When set, passed to `pipeline({ dtype })` and outranks auto-detection.
    */
@@ -218,6 +226,7 @@ const DEFAULTS: Required<
     | "embeddingShadowDimensions"
     | "embeddingShadowQueryPrefix"
     | "embeddingShadowDocumentPrefix"
+    | "embeddingShadowDtype"
     | "embeddingDtype"
     | "memoryModel"
     | "memoryApiUrl"
@@ -248,6 +257,7 @@ const DEFAULTS: Required<
   embeddingShadowDimensions?: number;
   embeddingShadowQueryPrefix?: string;
   embeddingShadowDocumentPrefix?: string;
+  embeddingShadowDtype?: string;
   embeddingDtype?: string;
   memoryModel?: string;
   memoryApiUrl?: string;
@@ -1084,6 +1094,7 @@ function buildConfig(fileConfig: OpenCodeMemConfig) {
     embeddingShadowDimensions: fileConfig.embeddingShadowDimensions,
     embeddingShadowQueryPrefix: fileConfig.embeddingShadowQueryPrefix,
     embeddingShadowDocumentPrefix: fileConfig.embeddingShadowDocumentPrefix,
+    embeddingShadowDtype: fileConfig.embeddingShadowDtype,
     embeddingDtype,
     embeddingApiUrl: fileConfig.embeddingApiUrl,
     embeddingApiKey: fileConfig.embeddingApiUrl

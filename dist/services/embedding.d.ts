@@ -73,6 +73,8 @@ export type EmbeddingModelSpec = {
     dimensions?: number;
     queryPrefix?: string;
     documentPrefix?: string;
+    /** dtype of the ONNX file, when the model's own declaration is not usable. */
+    dtype?: string;
 };
 export declare class EmbeddingService {
     private readonly spec?;

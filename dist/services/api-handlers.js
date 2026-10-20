@@ -914,6 +914,16 @@ export async function handleRunSweep(data) {
 }
 export async function handleStats() {
     try {
+        // The process's own memory: the store holds an embedding model in RAM, and
+        // the shadow index holds a second one. Guessing the host's budget is how a
+        // container gets OOM-killed in the middle of a reindex, so the number that
+        // decides it is reported instead.
+        const memory = process.memoryUsage();
+        const memoryMb = {
+            rss: Math.round(memory.rss / 1048576),
+            heapUsed: Math.round(memory.heapUsed / 1048576),
+            external: Math.round(memory.external / 1048576),
+        };
         // Stats only counts Turso/libSQL rows; no embedding needed.
         // See handleListTags comment - keep embedding init out of read paths.
         const shards = await getAllMemoryShards();
@@ -939,6 +949,7 @@ export async function handleStats() {
                 total: userCount + projectCount,
                 byScope: { user: userCount, project: projectCount },
                 byType: typeCount,
+                memoryMb,
             },
         };
     }

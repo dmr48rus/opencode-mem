@@ -343,12 +343,12 @@ export class EmbeddingService {
             // Local model path
             const { pipeline } = await ensureTransformersLoaded();
             // Explicit config wins; otherwise auto-resolve from model declaration / cache (#393).
-            const dtype = CONFIG.embeddingDtype ?? resolveLocalOnnxDtype(this.modelId);
+            const dtype = this.spec?.dtype ?? CONFIG.embeddingDtype ?? resolveLocalOnnxDtype(this.modelId);
             if (dtype) {
                 log("Resolved local ONNX dtype for embedding warmup", {
                     model: this.modelId,
                     dtype,
-                    source: CONFIG.embeddingDtype ? "config" : "auto",
+                    source: this.spec?.dtype ? "spec" : CONFIG.embeddingDtype ? "config" : "auto",
                 });
             }
             this.pipe = await pipeline("feature-extraction", this.modelId, {
@@ -433,6 +433,7 @@ export function getShadowEmbeddingService() {
             dimensions: CONFIG.embeddingShadowDimensions,
             queryPrefix: CONFIG.embeddingShadowQueryPrefix,
             documentPrefix: CONFIG.embeddingShadowDocumentPrefix,
+            dtype: CONFIG.embeddingShadowDtype,
         });
     }
     return shadowService;

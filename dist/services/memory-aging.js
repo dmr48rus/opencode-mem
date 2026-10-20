@@ -110,7 +110,12 @@ export async function runMemorySweep(options = {}) {
             try {
                 await tursoShardManager.withScopeWriteLock(shard.scope, shard.scopeHash, async () => {
                     const result = await db.run(`UPDATE memories SET aged_at = NULL WHERE aged_at IS NOT NULL`);
-                    restored += Number(result?.rowsAffected ?? 0);
+                    // run() returns the number of affected rows; the ResultSet shape is
+                    // accepted too, because the driver changed it once already.
+                    restored +=
+                        typeof result === "number"
+                            ? result
+                            : Number(result?.rowsAffected ?? 0);
                 });
             }
             catch (error) {

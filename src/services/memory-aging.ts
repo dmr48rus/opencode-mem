@@ -105,6 +105,7 @@ export type SweepReport = {
   scanned: number;
   byTier: Record<MemoryTier, number>;
   aged: number;
+  restored: number;
   candidates: SweepCandidate[];
 };
 
@@ -113,6 +114,7 @@ export type SweepOptions = {
   proceduralDays?: number;
   dryRun?: boolean;
   limit?: number;
+  restore?: boolean;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -128,6 +130,43 @@ export async function runMemorySweep(options: SweepOptions = {}): Promise<SweepR
     ...(await tursoShardManager.getAllShards("user", "")),
     ...(await tursoShardManager.getAllShards("project", "")),
   ];
+
+  // Восстановление: снимает пометку «постарело» со всех записей, которых она
+  // коснулась. Забывание обязано быть обратимым - иначе один свип на живом
+  // хранилище необратим.
+  if (options.restore === true) {
+    let restored = 0;
+    for (const shard of shards) {
+      const db = await tursoConnectionManager.getConnection(shard.dbPath);
+      await tursoShardManager.ensureShardSchema(db);
+      try {
+        await tursoShardManager.withScopeWriteLock(shard.scope, shard.scopeHash, async () => {
+          const result = await db.run(
+            `UPDATE memories SET aged_at = NULL WHERE aged_at IS NOT NULL`
+          );
+          // run() returns the number of affected rows; the ResultSet shape is
+          // accepted too, because the driver changed it once already.
+          restored +=
+            typeof result === "number"
+              ? result
+              : Number((result as { rowsAffected?: number })?.rowsAffected ?? 0);
+        });
+      } catch (error) {
+        log("Memory sweep: could not restore a shard", {
+          shard: shard.id,
+          error: String(error),
+        });
+      }
+    }
+    return {
+      dryRun: false,
+      scanned: 0,
+      byTier: { semantic: 0, procedural: 0, episodic: 0 },
+      aged: 0,
+      restored,
+      candidates: [],
+    };
+  }
 
   const now = Date.now();
   const byTier: Record<MemoryTier, number> = { semantic: 0, procedural: 0, episodic: 0 };
@@ -192,6 +231,7 @@ export async function runMemorySweep(options: SweepOptions = {}): Promise<SweepR
     scanned,
     byTier,
     aged,
+    restored: 0,
     candidates: selected.map((candidate) => ({
       id: candidate.id,
       tier: candidate.tier,

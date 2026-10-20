@@ -40,7 +40,7 @@ export declare class TursoVectorSearch {
      * still being filled.
      */
     private writeShadowVector;
-    searchInShard(shard: ShardInfo, queryVector: Float32Array, containerTag: string, limit: number, queryText?: string, globalLexicalRanks?: Map<string, number>, shadowQueryVector?: Float32Array, shadowMode?: ShadowMode): Promise<SearchResult[]>;
+    searchInShard(shard: ShardInfo, queryVector: Float32Array | undefined, containerTag: string, limit: number, queryText?: string, globalLexicalRanks?: Map<string, number>, shadowQueryVector?: Float32Array, shadowMode?: ShadowMode): Promise<SearchResult[]>;
     /**
      * Lexical ranking over a SET of shards, computed globally.
      *

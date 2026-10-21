@@ -201,6 +201,30 @@ export declare function handleMarkDuplicates(data?: {
     coldDays?: number;
     limit?: number;
 }): Promise<ApiResponse<any>>;
+/**
+ * Fold the marked duplicates into their canonical copies.
+ *
+ * The canonical copy stays intact and the fold can be undone: a compacted
+ * record keeps its text and its vector, it only stops surfacing.
+ */
+export declare function handleCompactDuplicates(data?: {
+    dryRun?: boolean;
+    coldDays?: number;
+    limit?: number;
+    restore?: boolean;
+}): Promise<ApiResponse<any>>;
+/**
+ * Flag the records that contradict each other. Nothing is resolved: both
+ * records stay where they are, and the owner decides which one wins.
+ */
+export declare function handleScanConflicts(data?: {
+    dryRun?: boolean;
+    limit?: number;
+}): Promise<ApiResponse<any>>;
+/** Clear the conflict flags of one record: the flag is a note, and notes are lifted. */
+export declare function handleClearConflicts(data?: {
+    memoryId?: string;
+}): Promise<ApiResponse<any>>;
 export declare function handleRunDeduplication(): Promise<ApiResponse<{
     exactDuplicatesDeleted: number;
     nearDuplicateGroups: any[];

@@ -265,7 +265,7 @@ export class TursoVectorSearch {
              ${shadowColumn}
              ${tagsColumn}
       FROM memories
-      WHERE id IN (${placeholders}) AND aged_at IS NULL
+      WHERE id IN (${placeholders}) AND aged_at IS NULL AND compacted_into IS NULL
     `
             : `
       SELECT id, content, tags, created_at, metadata, container_tag,
@@ -275,7 +275,7 @@ export class TursoVectorSearch {
              ${shadowColumn}
              ${tagsColumn}
       FROM memories
-      WHERE id IN (${placeholders}) AND container_tag = ? AND aged_at IS NULL
+      WHERE id IN (${placeholders}) AND container_tag = ? AND aged_at IS NULL AND compacted_into IS NULL
     `, containerTag === ""
             ? [...legacyParam, ...(shadowActive ? [shadowJson] : []), ...legacyParam, ...ids]
             : [
@@ -500,14 +500,14 @@ export class TursoVectorSearch {
             ? `
         SELECT m.id AS id, vector_distance_cos(m.${columnName}, vector32(?)) AS dist
         FROM memories m
-        WHERE m.${columnName} IS NOT NULL AND m.aged_at IS NULL
+        WHERE m.${columnName} IS NOT NULL AND m.aged_at IS NULL AND m.compacted_into IS NULL
         ORDER BY dist ASC
         LIMIT ?
       `
             : `
         SELECT m.id AS id, vector_distance_cos(m.${columnName}, vector32(?)) AS dist
         FROM memories m
-        WHERE m.${columnName} IS NOT NULL AND m.aged_at IS NULL AND m.container_tag = ?
+        WHERE m.${columnName} IS NOT NULL AND m.aged_at IS NULL AND m.compacted_into IS NULL AND m.container_tag = ?
         ORDER BY dist ASC
         LIMIT ?
       `, containerTag === "" ? [queryJson, k] : [queryJson, containerTag, k]);
@@ -611,14 +611,14 @@ export class TursoVectorSearch {
         if (clauses.length === 0) {
             return db.all(`
       SELECT * FROM memories
-      WHERE aged_at IS NULL
+      WHERE aged_at IS NULL AND compacted_into IS NULL
       ORDER BY is_pinned DESC, created_at DESC
       LIMIT ?
     `, [limit]);
         }
         return db.all(`
       SELECT * FROM memories
-      WHERE ${clauses.join(" AND ")} AND aged_at IS NULL
+      WHERE ${clauses.join(" AND ")} AND aged_at IS NULL AND compacted_into IS NULL
       ORDER BY is_pinned DESC, created_at DESC
       LIMIT ?
     `, [...params, limit]);

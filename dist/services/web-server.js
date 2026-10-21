@@ -11,7 +11,7 @@ import { getOrCreateAuthToken, isAuthorizedApiRequest } from "./auth-token.js";
 import { WebAuth } from "./web-auth.js";
 import { NODE_HTTP_IDLE_TIMEOUT_MS } from "./request-timeouts.js";
 import { checkMcpHost, handleMcpJsonRpc } from "./mcp-endpoint.js";
-import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleMarkDuplicates, handleTransferProfileIdentity, handleRunReindex, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
+import { handleListTags, handleListMemories, handleAddMemory, handleDeleteMemory, handleBulkDelete, handleUpdateMemory, handleSearch, handleSnapshot, handleMarkDuplicates, handleCompactDuplicates, handleScanConflicts, handleClearConflicts, handleTransferProfileIdentity, handleRunReindex, handleRunSweep, handleRememberByProject, handleStats, handlePinMemory, handleUnpinMemory, handleRunCleanup, handleRunDeduplication, handleDetectMigration, handleRunMigration, handleDetectTagMigration, handleRunTagMigrationBatch, handleGetTagMigrationProgress, handleDeletePrompt, handleBulkDeletePrompts, handleGetUserProfile, handlePutUserProfile, handleGetProfileChangelog, handleGetProfileSnapshot, handleRefreshProfile, handleAICleanup, handleApplyCleanup, handleUpdateProfileItem, handleListSkills, handleGetSkill, handleCreateSkill, handleUpdateSkill, handleDeleteSkill, handleSkillsCatalogIndex, handleSkillsCatalogFile, } from "./api-handlers.js";
 const isBun = typeof globalThis.Bun !== "undefined";
 const MIN_FAILED_TAKEOVERS = 3;
 export function attachNodeDisconnectHandlers(req, res, onDisconnect) {
@@ -611,6 +611,33 @@ export class WebServer {
                     coldDays: body?.coldDays,
                     limit: body?.limit,
                 });
+                return this.jsonResponse(result);
+            }
+            // The compaction: a copy of a cold cluster is folded into its canonical
+            // copy and stops surfacing. The canonical copy stays where it is, and the
+            // fold is undone by restoring.
+            if (path === "/api/compact" && method === "POST") {
+                const body = (await req.json().catch(() => ({})));
+                const result = await handleCompactDuplicates({
+                    dryRun: body?.dryRun,
+                    coldDays: body?.coldDays,
+                    limit: body?.limit,
+                    restore: body?.restore === true,
+                });
+                return this.jsonResponse(result);
+            }
+            // The contradictions are flagged, never resolved: both records stay.
+            if (path === "/api/conflicts/scan" && method === "POST") {
+                const body = (await req.json().catch(() => ({})));
+                const result = await handleScanConflicts({
+                    dryRun: body?.dryRun,
+                    limit: body?.limit,
+                });
+                return this.jsonResponse(result);
+            }
+            if (path === "/api/conflicts/clear" && method === "POST") {
+                const body = (await req.json().catch(() => ({})));
+                const result = await handleClearConflicts({ memoryId: body?.memoryId });
                 return this.jsonResponse(result);
             }
             if (path === "/api/migration/detect" && method === "GET") {

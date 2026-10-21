@@ -46,8 +46,8 @@ openspec
 package/
 
 # fork-side additions
-remote-mem/bundle/
-remote-mem/.env
+aletheia_server/bundle/
+aletheia_server/.env
 data/
 *.db
 *.db-wal

@@ -25,11 +25,24 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
-const forkSrc = process.env.REMOTE_MEM_FORK ?? "X:/ai/hermes/backend/vendor/opencode-mem";
+// The fork is the plugin build the server runs. Its place depends on where
+// this file lives: in the working repository it is a sibling of the build,
+// inside the plugin repository it is three levels up. A hardcoded path broke
+// on the first move, so the places are tried in order and the error says
+// what to set.
+const forkCandidates = [
+  process.env.REMOTE_MEM_FORK,
+  join(here, "..", "hermes", "backend", "vendor", "opencode-mem"),
+  join(here, "..", "..", "..", "backend", "hermes", "backend", "vendor", "opencode-mem"),
+  "X:/ai/hermes/backend/vendor/opencode-mem",
+].filter(Boolean);
+const forkSrc = forkCandidates.find((p) => existsSync(join(p, "dist", "config.js")));
 const out = resolve(process.env.REMOTE_MEM_BUNDLE ?? join(here, "bundle"));
 
 if (!existsSync(join(forkSrc, "dist", "config.js"))) {
-  console.error(`pack: no fork build at ${forkSrc} (need dist/config.js)`);
+  console.error(
+    `pack: no fork build (need dist/config.js). Looked in:\n  ${forkCandidates.join("\n  ")}\n  set REMOTE_MEM_FORK to the plugin build.`
+  );
   process.exit(1);
 }
 

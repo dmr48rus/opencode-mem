@@ -18,6 +18,35 @@
   // records indexed without them stop being found by their own words.
   "embeddingUseTaskPrefixes": true,
 
+  // The shadow (second) model. Its vectors go to a parallel column, so the
+  // model in charge keeps serving the store while the shadow index is filled;
+  // the switch is then made by measurement, not by hope. Measured on the live
+  // corpus: a multilingual model takes the semantic slice from 16/28 to 21/28,
+  // while the English-only model adds nothing over the lexical channel.
+  // Prefixes are the model's own ("query: " for the query, "passage: " for the
+  // text) - they are part of the model, not decoration.
+  "embeddingShadowModel": "onnx-community/embeddinggemma-2-ONNX",
+  "embeddingShadowQueryPrefix": "task: search result | query: ",
+  "embeddingShadowDocumentPrefix": "title: none | text: ",
+  // The model declares bfloat16, and the repository ships no such file; q8 is
+  // the quantized text path (300 MB against 1 GB for fp32).
+  "embeddingShadowDtype": "q8",
+
+  // The server's own LLM: a local model on this host (docker-compose.llm.yml),
+  // reachable by container name over dockerbee. It is here for the batch work -
+  // the tag migration - and for nothing else: judging contradictions was
+  // measured and rejected. A 4B model catches 3 of 4 contradictions and a 1.7B
+  // two of four, both without a single false positive, but everything they
+  // catch the lexical detector catches too, and the one case only a model
+  // could catch (a paraphrase) is the one it gets wrong or answers differently
+  // when the pair is reversed.
+  //
+  // The key is read from the environment and never written here: this file is
+  // in git, and a key in git is a key in every clone.
+  "memoryModel": "/models/Qwen3-1.7B-Q4_K_M.gguf",
+  "memoryApiUrl": "http://llm:8080/v1",
+  "memoryApiKey": "env://REMOTE_MEM_LLM_KEY",
+
   // The store is this process. Auto-capture belongs to the client (it needs the
   // local OpenCode for the summary), so there is nothing to capture here.
   "autoCaptureEnabled": false,
@@ -27,6 +56,20 @@
   // would replace them with upstream builds. The plugin never starts
   // auto-update on this path either; stated so nobody "fixes" it later.
   "autoUpdate": false,
+
+  // Which user id this server speaks for. The web UI asks /api/user-profile
+  // without a userId, and the handler resolves one from the git identity of the
+  // process working directory (api-handlers.js:818). Inside the container that
+  // directory is not a repository, so the id collapsed to "unknown" and the page
+  // answered "No profile found" while the profile sat right there under
+  // build@hermes.local. The handler's fallback ("the single active profile")
+  // only fires when exactly one row is active, so it breaks as soon as a second
+  // machine with a different git identity writes its own row.
+  //
+  // Pinning the id here is what makes several machines agree: every client is
+  // configured with the same value, so there is one profile, not one per machine,
+  // and the page resolves it without depending on git or on a row count.
+  "userEmailOverride": "build@hermes.local",
 
   "webServerEnabled": true,
 

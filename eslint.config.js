@@ -15,7 +15,7 @@ export default ts.config(
       // with the plugin's rules only produces errors about variables that were
       // never wrong, and fixing them here would edit code this repository does
       // not own.
-      "remote-mem/**",
+      "aletheia_server/**",
       "web/dist/**",
       "web/node_modules/**",
     ],

@@ -25,6 +25,16 @@ services:
       # the password resolves to nothing, auth stays disabled, and the UI comes
       # back as a shell whose own scripts are refused as a non-loopback origin.
       REMOTE_MEM_WEB_PASSWORD: "${REMOTE_MEM_WEB_PASSWORD:-}"
+      # Rank fusion over the content, tags and BM25 channels. Off by default:
+      # the legacy weighted sum stays until the hybrid is measured on live data.
+      OPENCODE_MEM_RRF: "${OPENCODE_MEM_RRF:-}"
+      OPENCODE_MEM_RRF_K: "${OPENCODE_MEM_RRF_K:-10}"
+      # The key for the local model (docker-compose.llm.yml). It has to exist
+      # INSIDE the container, the same way the web password does: the config
+      # resolves memoryApiKey through env://REMOTE_MEM_LLM_KEY, and without the
+      # variable the provider is never built and the tag migration reports that
+      # the external API is not configured.
+      REMOTE_MEM_LLM_KEY: "${REMOTE_MEM_LLM_KEY:-}"
     volumes:
       # The only host state: shards, model cache, auth token, config copy.
       # Bind mount rather than a named volume so borg backs up a plain directory

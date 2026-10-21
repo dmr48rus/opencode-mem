@@ -8,7 +8,7 @@
 Upstream: `tickernelz/opencode-mem`, branch `patched/2.31.0`.
 Everything below is committed on that branch; `main` is untouched upstream.
 
-**`remote-mem/` in this repository is a mirror, not the deployment source.** The
+**`aletheia_server/` in this repository is a mirror, not the deployment source.** The
 source is a separate working copy on the development machine, the bundle is
 packed from there, and this mirror lags behind it. Edit the working copy, not
 this one. The exception is the probe scripts (`probe-local-llm.sh`,
@@ -19,19 +19,19 @@ its version at startup so a stale copy on the server is visible immediately.
 
 ## The server lives here too
 
-`remote-mem/` is the standalone memory server this fork was paired with: a
+`aletheia_server/` is the standalone memory server this fork was paired with: a
 Docker image that runs the very same `dist/` from this repository, stores
 shards under `/data/.opencode-mem/data`, and serves the plugin's HTTP API plus
 its web UI.
 
-- `remote-mem/server.mjs` — boots the plugin's web server from the bundled dist
-- `remote-mem/config/opencode-mem.jsonc` — server-side config, read-only mount
-- `remote-mem/Dockerfile`, `docker-compose.yml` — image and loopback publish
-- `remote-mem/pack.mjs` — copies the working set into `remote-mem/bundle/` and
+- `aletheia_server/server.mjs` — boots the plugin's web server from the bundled dist
+- `aletheia_server/config/opencode-mem.jsonc` — server-side config, read-only mount
+- `aletheia_server/Dockerfile`, `docker-compose.yml` — image and loopback publish
+- `aletheia_server/pack.mjs` — copies the working set into `aletheia_server/bundle/` and
   prints the digest that `deploy.sh` must reproduce on the target host
-- `remote-mem/deploy.sh` — runs on the server
+- `aletheia_server/deploy.sh` — runs on the server
 
-`remote-mem/bundle/` is build output and is not committed; `pack.mjs` recreates
+`aletheia_server/bundle/` is build output and is not committed; `pack.mjs` recreates
 it from `dist/`.
 
 ## dist/ is committed on purpose
@@ -57,9 +57,9 @@ directory, so a mismatch between the two means the vendor is stale.
 
 Only templates are committed:
 
-- `remote-mem/.env.example` — copy to `.env` on the server and fill in
+- `aletheia_server/.env.example` — copy to `.env` on the server and fill in
   `REMOTE_MEM_WEB_PASSWORD`
-- `remote-mem/config/opencode-mem.jsonc` — reads the password through
+- `aletheia_server/config/opencode-mem.jsonc` — reads the password through
   `env://REMOTE_MEM_WEB_PASSWORD`, never a literal
 
 The API token is generated on the server at first boot into

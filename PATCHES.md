@@ -106,7 +106,7 @@ ever created, not because registration was broken.
 ## Repository, not runtime
 
 **`afd5287` self-contained repository** — `dist/` is committed (what the build
-vendors must not depend on a rebuild), `remote-mem/` holds the server, and
+vendors must not depend on a rebuild), `aletheia_server/` holds the server, and
 `eslint.config.js` / `package.json` keep the pre-commit hook off both, since
 prettier over `dist/` would rewrite the artifact this repository ships.
 

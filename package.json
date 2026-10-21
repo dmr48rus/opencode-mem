@@ -103,7 +103,7 @@
   ],
   "lint-staged": {
     "!dist/**": [],
-    "!remote-mem/**": [],
+    "!aletheia_server/**": [],
     "*.{js,mjs,cjs,ts}": [
       "eslint --fix",
       "prettier --write"

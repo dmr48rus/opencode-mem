@@ -54,6 +54,7 @@ const files = [
   "Dockerfile",
   ".dockerignore",
   "docker-compose.yml",
+  "docker-compose.llm.yml",
   ".env.example",
   "deploy.sh",
   "AGENTS.md",
